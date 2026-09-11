@@ -47,6 +47,7 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
   const pending = new Map<string, Pending>();
   const listeners = new Map<EmbedEventName, Set<(payload: never) => void>>();
   let destroyed = false;
+  let initSent = false;
   let readyResolve: ((h: EditorHandle) => void) | null = null;
   let readyReject: ((e: EmbedError) => void) | null = null;
   let bootTimer: ReturnType<typeof setTimeout> | null = null;
@@ -59,10 +60,36 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
     for (const cb of listeners.get(name) ?? []) (cb as (p: EmbedEvents[E]) => void)(data);
   };
 
+  /** Full teardown shared by an early boot failure (timeout / pre-ready `error`) and `handle.destroy()`: stop listening, fail any pending calls, and remove the iframe so an abandoned frame can never trigger another `init` (which would resend the real token/publishableKey). Idempotent. */
+  const teardown = (): void => {
+    if (destroyed) return;
+    destroyed = true;
+    win.removeEventListener('message', onMessage);
+    for (const p of pending.values()) { win.clearTimeout(p.timer); p.reject(new EmbedError('destroyed', 'editor was destroyed')); }
+    pending.clear();
+    iframe.remove();
+  };
+
   const onMessage = (event: MessageEvent): void => {
     if (!isTrustedEvent(event, iframe.contentWindow, embedOrigin) || !isProtocolMessage(event.data)) return;
     const msg = event.data as FrameToHostMessage;
     if (msg.type === 'ready-for-init') {
+      if (initSent) return;
+      initSent = true;
+      if (!config.token && !config.publishableKey && config.getToken) {
+        // getToken-only bootstrap: fetch a token before the frame ever sees a config, so it never has to ask again.
+        config.getToken()
+          .then((token) => {
+            if (destroyed) return;
+            post({ snapnedit: 1, type: 'init', payload: { config: { ...stripFunctions(config), token } } });
+          })
+          .catch((e: unknown) => {
+            if (destroyed) return;
+            teardown();
+            if (readyReject) { readyReject(new EmbedError('unauthorized', `getToken failed: ${String(e)}`)); readyResolve = null; readyReject = null; }
+          });
+        return;
+      }
       post({ snapnedit: 1, type: 'init', payload: { config: stripFunctions(config) } });
       return;
     }
@@ -84,6 +111,7 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
       if (name === 'error' && readyReject) {
         if (bootTimer !== null) { win.clearTimeout(bootTimer); bootTimer = null; }
         const err = data as EmbedEvents['error'];
+        teardown();
         readyReject(new EmbedError(err.code, err.message)); readyResolve = null; readyReject = null;
       }
       if (name === 'token-expiring' && config.getToken) {
@@ -117,14 +145,7 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
       return () => handle.off(event, cb);
     },
     off(event, cb) { listeners.get(event)?.delete(cb as (p: never) => void); },
-    destroy() {
-      if (destroyed) return;
-      destroyed = true;
-      win.removeEventListener('message', onMessage);
-      for (const p of pending.values()) { win.clearTimeout(p.timer); p.reject(new EmbedError('destroyed', 'editor was destroyed')); }
-      pending.clear();
-      iframe.remove();
-    },
+    destroy() { teardown(); },
   } as EditorHandle;
   for (const method of METHODS) {
     (handle as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => call(method, args);
@@ -135,7 +156,11 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
     readyReject = reject;
     bootTimer = win.setTimeout(() => {
       bootTimer = null;
-      if (readyReject) { readyReject(new EmbedError('timeout', 'editor did not become ready within 60s')); readyResolve = null; readyReject = null; }
+      if (readyReject) {
+        teardown();
+        readyReject(new EmbedError('timeout', 'editor did not become ready within 60s'));
+        readyResolve = null; readyReject = null;
+      }
     }, 60_000);
   });
 }

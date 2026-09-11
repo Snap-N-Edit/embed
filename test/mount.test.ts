@@ -84,6 +84,63 @@ describe('mount', () => {
     await expect(handle.undo()).rejects.toMatchObject({ code: 'destroyed' });
   });
 
+  test('boot timeout tears down (removes the message listener and the iframe) and a later ready-for-init posts nothing', async () => {
+    vi.useFakeTimers();
+    try {
+      const env = fakeEnv();
+      const p = mount(env.target as never, { token: 't' }, { window: env.window as never, document: env.document as never });
+      const rejection = expect(p).rejects.toMatchObject({ code: 'timeout' });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await rejection;
+      expect(env.iframe.remove).toHaveBeenCalled();
+      env.emit({ snapnedit: 1, type: 'ready-for-init' });
+      expect(env.posted).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a pre-ready error event tears down (removes the iframe) and rejects mount with that error', async () => {
+    const env = fakeEnv();
+    const p = mount(env.target as never, { token: 't' }, { window: env.window as never, document: env.document as never });
+    env.emit({ snapnedit: 1, type: 'ready-for-init' });
+    env.emit({ snapnedit: 1, type: 'event', payload: { name: 'error', data: { code: 'origin_denied', message: 'nope' } } });
+    await expect(p).rejects.toMatchObject({ code: 'origin_denied', message: 'nope' });
+    expect(env.iframe.remove).toHaveBeenCalled();
+  });
+
+  test('a second ready-for-init does not post a second init', async () => {
+    const env = fakeEnv();
+    const p = mount(env.target as never, { token: 't' }, { window: env.window as never, document: env.document as never });
+    env.emit({ snapnedit: 1, type: 'ready-for-init' });
+    env.emit({ snapnedit: 1, type: 'ready-for-init' });
+    expect(env.posted.filter((m) => m.msg.type === 'init')).toHaveLength(1);
+    env.emit({ snapnedit: 1, type: 'event', payload: { name: 'ready', data: { version: '0.1.0' } } });
+    await p;
+  });
+
+  test('getToken-only config: getToken is awaited before init, whose config carries the fresh token', async () => {
+    const env = fakeEnv();
+    const getToken = vi.fn(async () => 'fresh');
+    const p = mount(env.target as never, { getToken }, { window: env.window as never, document: env.document as never });
+    env.emit({ snapnedit: 1, type: 'ready-for-init' });
+    await vi.waitFor(() => expect(env.posted).toHaveLength(1));
+    expect(getToken).toHaveBeenCalledTimes(1);
+    expect(env.posted[0]?.msg).toEqual({ snapnedit: 1, type: 'init', payload: { config: { token: 'fresh' } } });
+    env.emit({ snapnedit: 1, type: 'event', payload: { name: 'ready', data: { version: '0.1.0' } } });
+    await p;
+  });
+
+  test('getToken-only config: a rejecting getToken tears down and rejects mount as unauthorized', async () => {
+    const env = fakeEnv();
+    const getToken = vi.fn(async () => { throw new Error('nope'); });
+    const p = mount(env.target as never, { getToken }, { window: env.window as never, document: env.document as never });
+    env.emit({ snapnedit: 1, type: 'ready-for-init' });
+    await expect(p).rejects.toMatchObject({ code: 'unauthorized' });
+    expect(env.iframe.remove).toHaveBeenCalled();
+    expect(env.posted).toHaveLength(0);
+  });
+
   test('rejects when neither publishableKey nor token is given', async () => {
     const env = fakeEnv();
     await expect(mount(env.target as never, {}, { window: env.window as never, document: env.document as never })).rejects.toMatchObject({ code: 'invalid_input' });
