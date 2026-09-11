@@ -141,6 +141,40 @@ describe('mount', () => {
     expect(env.posted).toHaveLength(0);
   });
 
+  test('on("ready") registered AFTER ready fired replays the buffered payload', async () => {
+    // The natural usage — `const h = await mount(...); h.on('ready', ...)` —
+    // registers strictly after the frame's `ready` message. Without the replay
+    // that listener could never fire.
+    const env = fakeEnv();
+    const p = mount(env.target as never, { token: 't' }, { window: env.window as never, document: env.document as never });
+    env.emit({ snapnedit: 1, type: 'ready-for-init' });
+    env.emit({ snapnedit: 1, type: 'event', payload: { name: 'ready', data: { version: '0.1.0' } } });
+    const handle = await p;
+    const late = vi.fn();
+    handle.on('ready', late);
+    expect(late).toHaveBeenCalledWith({ version: '0.1.0' });
+    // Other events are live-only: a late listener for them is not back-filled.
+    const change = vi.fn();
+    handle.on('change', change);
+    expect(change).not.toHaveBeenCalled();
+  });
+
+  test('teardown() clears the 60s boot timer (a rejecting getToken must not leave it armed)', async () => {
+    // `teardown()` is reached before `ready` on the getToken-rejection path,
+    // which is the one route that did NOT clear `bootTimer` itself — leaving a
+    // 60s timer holding the event loop open against a removed iframe.
+    vi.useFakeTimers();
+    try {
+      const env = fakeEnv();
+      const p = mount(env.target as never, { getToken: async () => { throw new Error('nope'); } }, { window: env.window as never, document: env.document as never });
+      env.emit({ snapnedit: 1, type: 'ready-for-init' });
+      await expect(p).rejects.toMatchObject({ code: 'unauthorized' });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('rejects when neither publishableKey nor token is given', async () => {
     const env = fakeEnv();
     await expect(mount(env.target as never, {}, { window: env.window as never, document: env.document as never })).rejects.toMatchObject({ code: 'invalid_input' });

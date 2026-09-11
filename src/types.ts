@@ -82,7 +82,18 @@ export interface EmbedEvents {
 export type EmbedEventName = keyof EmbedEvents;
 
 export interface EditorHandle {
+  /**
+   * Replaces the document with one sized to `src`.
+   *
+   * A string `src` must be an `https:`, `blob:` or `data:` URL — anything
+   * else (including a relative path, which would resolve against the FRAME's
+   * origin rather than your page's) rejects with `invalid_input`. The frame
+   * fetches URLs itself, with its own origin and credentials, so it will not
+   * be pointed at arbitrary schemes on a host's behalf. When the bytes live
+   * on your own origin, fetch them host-side and pass the `Blob`/`File`.
+   */
   loadImage(src: string | Blob | File, opts?: { name?: string }): Promise<void>;
+  /** Adds `src` as a new layer, keeping the current document. Same `src` rules as {@link EditorHandle.loadImage}. */
   addImage(src: string | Blob | File, opts?: { name?: string }): Promise<void>;
   loadDocument(doc: Document): Promise<void>;
   getDocument(): Promise<Document>;

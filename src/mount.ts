@@ -51,6 +51,15 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
   let readyResolve: ((h: EditorHandle) => void) | null = null;
   let readyReject: ((e: EmbedError) => void) | null = null;
   let bootTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * The `ready` payload, kept after it fires. `ready` is a one-shot lifecycle
+   * event that has ALREADY happened by the time `mount()`'s promise resolves,
+   * so the natural `const h = await mount(...); h.on('ready', …)` would
+   * otherwise register a listener that can never be called. Replaying it
+   * synchronously on registration makes `on('ready')` work regardless of
+   * ordering; every other event stays purely live (they recur).
+   */
+  let readyPayload: EmbedEvents['ready'] | null = null;
 
   const post = (msg: HostToFrameMessage): void => {
     iframe.contentWindow?.postMessage(msg, embedOrigin);
@@ -65,6 +74,10 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
     if (destroyed) return;
     destroyed = true;
     win.removeEventListener('message', onMessage);
+    // A `destroy()` before `ready` would otherwise leave the 60s boot timer
+    // armed, holding the (Node) event loop open and firing against a frame
+    // that no longer exists.
+    if (bootTimer !== null) { win.clearTimeout(bootTimer); bootTimer = null; }
     for (const p of pending.values()) { win.clearTimeout(p.timer); p.reject(new EmbedError('destroyed', 'editor was destroyed')); }
     pending.clear();
     iframe.remove();
@@ -104,9 +117,12 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
     }
     if (msg.type === 'event') {
       const { name, data } = msg.payload;
-      if (name === 'ready' && readyResolve) {
-        if (bootTimer !== null) { win.clearTimeout(bootTimer); bootTimer = null; }
-        readyResolve(handle); readyResolve = null; readyReject = null;
+      if (name === 'ready') {
+        readyPayload = data as EmbedEvents['ready'];
+        if (readyResolve) {
+          if (bootTimer !== null) { win.clearTimeout(bootTimer); bootTimer = null; }
+          readyResolve(handle); readyResolve = null; readyReject = null;
+        }
       }
       if (name === 'error' && readyReject) {
         if (bootTimer !== null) { win.clearTimeout(bootTimer); bootTimer = null; }
@@ -142,6 +158,12 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
       const set = listeners.get(event) ?? new Set();
       set.add(cb as (p: never) => void);
       listeners.set(event, set);
+      // `ready` already fired for anyone who registered after awaiting
+      // `mount()` — replay it so the listener isn't silently dead. See
+      // `readyPayload`.
+      if (event === 'ready' && readyPayload !== null) {
+        (cb as (p: EmbedEvents['ready']) => void)(readyPayload);
+      }
       return () => handle.off(event, cb);
     },
     off(event, cb) { listeners.get(event)?.delete(cb as (p: never) => void); },
