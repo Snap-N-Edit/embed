@@ -1,22 +1,6 @@
 import type { ErrorCode, OperationId } from '@snapnedit/shared';
 import type { Document } from '@snapnedit/editor-core';
 
-/**
- * `tsconfig.check.json` type-checks this package's `src` with only `lib: ES2022`
- * (no DOM). A full `/// <reference lib="dom" />` would fix that, but — verified
- * empirically — it also flips a `typeof globalThis extends { onmessage: any }`
- * conditional inside `@types/node`'s bundled `fetch.d.ts`, which changes how
- * `BodyInit` resolves program-wide and breaks an unrelated file
- * (`packages/sdk/src/client.ts`) that the typecheck gate must not touch.
- * Declaring only the one DOM-only name actually used below avoids that global
- * side effect; it merges harmlessly with the real `lib.dom.d.ts` declaration
- * under this package's own `tsconfig.json` (full DOM lib) used for `npm run build`.
- */
-declare global {
-  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-  interface HTMLIFrameElement {}
-}
-
 export type ExportFormat = 'png' | 'jpg' | 'webp' | 'avif' | 'svg' | 'pdf';
 export type RailKey = 'templates' | 'text' | 'shapes' | 'elements' | 'data' | 'uploads' | 'stock' | 'draw' | 'brand' | 'magic' | 'saved';
 export type PanelKey = 'layers' | 'adjustments' | 'filters' | 'effects' | 'animation' | 'ai';
