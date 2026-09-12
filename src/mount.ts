@@ -6,6 +6,13 @@ export const LONG_CALL_TIMEOUT_MS = 180_000;
 /** Token-refresh backoff: 1s, 2s, 4s … capped at 30s. See `onTokenExpiring`. */
 export const TOKEN_RETRY_BASE_MS = 1_000;
 export const TOKEN_RETRY_MAX_MS = 30_000;
+/**
+ * How long a host `getToken()` may take before the refresh is abandoned. A
+ * host promise that never settles (a fetch with no timeout against a black
+ * hole) would otherwise leave `refreshInFlight` true FOREVER, permanently
+ * wedging every later refresh — including the one that would have worked.
+ */
+export const TOKEN_REQUEST_TIMEOUT_MS = 30_000;
 const LONG_CALLS: ReadonlySet<EditorMethod> = new Set<EditorMethod>(['export', 'run', 'loadImage', 'addImage']);
 const METHODS: readonly EditorMethod[] = ['loadImage', 'addImage', 'loadDocument', 'getDocument', 'getPages', 'newDocument', 'export', 'run', 'openTool', 'undo', 'redo', 'select', 'getState', 'setTheme', 'setFeatures', 'setLocale'];
 
@@ -99,6 +106,7 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
     // Same for the token-refresh/expiry ticker, and drop the replay buffer so a
     // destroyed handle can't hand a stale `ready` to a listener registered after.
     clearRefreshTimer();
+    clearTokenTimeout();
     readyPayload = null;
     for (const p of pending.values()) { win.clearTimeout(p.timer); p.reject(new EmbedError('destroyed', 'editor was destroyed')); }
     pending.clear();
@@ -115,9 +123,25 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
   let refreshInFlight = false;
   let refreshBackoffMs = 0;
   let tokenExpiredEmitted = false;
+  // Watchdog for the CURRENT `getToken()` call, plus a sequence number that
+  // makes a timed-out attempt inert if it settles late (see `requestToken`).
+  let tokenTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  let tokenRequestSeq = 0;
+  /**
+   * True while the frame is reporting a token that is ALREADY expired. The
+   * ladder must keep escalating through such an episode even when `getToken`
+   * resolves, because a host that answers with the same stale token would
+   * otherwise be retried every second forever — the exact hammer this backoff
+   * exists to prevent. Cleared by the first healthy (not-yet-expired)
+   * `token-expiring`, which is the only real evidence the session recovered.
+   */
+  let expiredEpisode = false;
 
   const clearRefreshTimer = (): void => {
     if (refreshTimer !== null) { win.clearTimeout(refreshTimer); refreshTimer = null; }
+  };
+  const clearTokenTimeout = (): void => {
+    if (tokenTimeoutTimer !== null) { win.clearTimeout(tokenTimeoutTimer); tokenTimeoutTimer = null; }
   };
   const armRefreshTimer = (delay: number, fn: () => void): void => {
     clearRefreshTimer();
@@ -128,24 +152,65 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
     return refreshBackoffMs;
   };
 
-  /** Asks the host for a fresh token and hands it to the frame; a failure is reported and retried, backed off. */
+  /**
+   * A refresh attempt that did not produce a token: reported once, then
+   * retried on the backoff ladder. One failed round-trip to the host's
+   * backend is not fatal — but a broken endpoint must not be hammered.
+   */
+  const failRefresh = (message: string): void => {
+    refreshInFlight = false;
+    if (destroyed) return;
+    emitLocal('error', { code: 'unauthorized', message });
+    armRefreshTimer(nextBackoff(), requestToken);
+  };
+
+  /**
+   * Asks the host for a fresh token and hands it to the frame; a failure —
+   * a rejection OR a `getToken()` that hasn't settled within
+   * {@link TOKEN_REQUEST_TIMEOUT_MS} — is reported and retried, backed off.
+   * The timeout bumps `tokenRequestSeq`, so if the abandoned promise settles
+   * afterwards it is ignored rather than racing the retry it was replaced by.
+   */
   const requestToken = (): void => {
     const getToken = config.getToken;
     if (destroyed || refreshInFlight || !getToken) return;
     refreshInFlight = true;
+    const seq = (tokenRequestSeq += 1);
+    /** True iff THIS attempt is still the current one; clears its watchdog. */
+    const settle = (): boolean => {
+      if (seq !== tokenRequestSeq) return false;
+      clearTokenTimeout();
+      return true;
+    };
+    tokenTimeoutTimer = win.setTimeout(() => {
+      tokenTimeoutTimer = null;
+      if (seq !== tokenRequestSeq) return;
+      tokenRequestSeq += 1; // the in-flight attempt is now stale — its settle() is a no-op
+      failRefresh(`getToken timed out after ${TOKEN_REQUEST_TIMEOUT_MS}ms`);
+    }, TOKEN_REQUEST_TIMEOUT_MS);
     void getToken().then(
       (token) => {
+        if (!settle()) return;
         refreshInFlight = false;
         if (destroyed) return;
+        // A refresh that produced a token ends the failure episode: drop the
+        // armed retry and reset the ladder, so the next unrelated failure
+        // starts at 1s rather than inheriting a 30s wait from an episode that
+        // is already over. This used to happen ONLY on the healthy
+        // `token-expiring` branch, so a run of rejected refreshes left the
+        // ladder wound up until the frame next warned in good time.
+        // The one case that must NOT reset: an already-expired episode, where
+        // `getToken` resolving proves nothing (the host can hand back the same
+        // stale token indefinitely) — see `expiredEpisode`.
+        if (!expiredEpisode) {
+          refreshBackoffMs = 0;
+          clearRefreshTimer();
+        }
         post({ snapnedit: 1, type: 'refresh-token', payload: { token } });
       },
       (e: unknown) => {
-        refreshInFlight = false;
-        if (destroyed) return;
-        emitLocal('error', { code: 'unauthorized', message: `getToken failed: ${String(e)}` });
-        // One failed round-trip to the host's backend is not fatal — retry,
-        // backed off, so a broken endpoint isn't hammered either.
-        armRefreshTimer(nextBackoff(), requestToken);
+        if (!settle()) return;
+        failRefresh(`getToken failed: ${String(e)}`);
       },
     );
   };
@@ -170,11 +235,13 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
     if (!alreadyExpired) {
       // The frame warns at 80% of the TTL, so there is still a real window:
       // refresh immediately and treat the session as healthy again.
+      expiredEpisode = false;
       refreshBackoffMs = 0;
       clearRefreshTimer();
       requestToken();
       return true;
     }
+    expiredEpisode = true;
     if (refreshTimer !== null || refreshInFlight) return false; // already handling this episode; stay quiet
     const firstOfEpisode = refreshBackoffMs === 0;
     armRefreshTimer(nextBackoff(), requestToken);

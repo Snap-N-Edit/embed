@@ -310,6 +310,145 @@ describe('mount', () => {
     }
   });
 
+  test('a getToken that never settles times out at 30s and is retried instead of wedging refreshes forever', async () => {
+    // Regression guard: `refreshInFlight` was set before awaiting the host's
+    // promise and cleared only in its handlers, so a `getToken` that never
+    // settled (a fetch with no timeout) left it true for the life of the
+    // handle — every later refresh, including one that would have worked,
+    // returned immediately at the `refreshInFlight` guard.
+    vi.useFakeTimers();
+    try {
+      const env = fakeEnv();
+      const hung = vi.fn(() => new Promise<string>(() => {}));
+      const handle = await booted(env, { token: 'old', getToken: hung });
+      const onError = vi.fn();
+      handle.on('error', onError);
+
+      env.emit({ snapnedit: 1, type: 'event', payload: { name: 'token-expiring', data: { expiresAt: 'not-a-date' } } });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(hung).toHaveBeenCalledTimes(1);
+
+      // Still hanging just short of the deadline: nothing reported, no retry.
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(onError).not.toHaveBeenCalled();
+      expect(hung).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(onError).toHaveBeenCalledWith({ code: 'unauthorized', message: expect.stringContaining('timed out') as unknown as string });
+
+      // ...and the ladder continues from 1s, exactly like a rejection.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(hung).toHaveBeenCalledTimes(2);
+
+      handle.destroy();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(hung).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a late-settling timed-out getToken is ignored — it does not post a stale token or double-count', async () => {
+    vi.useFakeTimers();
+    try {
+      const env = fakeEnv();
+      let release: ((t: string) => void) | undefined;
+      const getToken = vi.fn(() => new Promise<string>((resolve) => { release = resolve; }));
+      const handle = await booted(env, { token: 'old', getToken });
+      env.emit({ snapnedit: 1, type: 'event', payload: { name: 'token-expiring', data: { expiresAt: 'not-a-date' } } });
+      await vi.advanceTimersByTimeAsync(30_000); // times out; a retry is armed
+      const postedBefore = env.posted.length;
+
+      release?.('way-too-late');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(env.posted.length).toBe(postedBefore); // no refresh-token from the abandoned attempt
+
+      handle.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a successful refresh resets the ladder, so a later unrelated failure starts at 1s again', async () => {
+    // The reset used to live only on the healthy `token-expiring` branch, so a
+    // run of rejected refreshes left the ladder wound up: the first retry of
+    // the NEXT episode waited however long the previous one had climbed to.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      const env = fakeEnv();
+      let fail = true;
+      const getToken = vi.fn(async () => {
+        if (fail) throw new Error('backend down');
+        return 'fresh';
+      });
+      const handle = await booted(env, { token: 'old', getToken });
+      const healthy = () =>
+        env.emit({
+          snapnedit: 1,
+          type: 'event',
+          payload: { name: 'token-expiring', data: { expiresAt: new Date(Date.now() + 60_000).toISOString() } },
+        });
+
+      // Episode 1: warn healthy -> immediate refresh, which rejects twice
+      // (1s then 2s), climbing the ladder to 2s.
+      healthy();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getToken).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(getToken).toHaveBeenCalledTimes(2);
+
+      // The third attempt succeeds — the episode is over.
+      fail = false;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(getToken).toHaveBeenCalledTimes(3);
+      expect(env.posted.at(-1)?.msg).toEqual({ snapnedit: 1, type: 'refresh-token', payload: { token: 'fresh' } });
+
+      // Episode 2, much later: the first retry must be 1s, not 4s.
+      fail = true;
+      healthy();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getToken).toHaveBeenCalledTimes(4);
+      await vi.advanceTimersByTimeAsync(999);
+      expect(getToken).toHaveBeenCalledTimes(4);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(getToken).toHaveBeenCalledTimes(5);
+
+      handle.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('an already-expired episode keeps escalating even though getToken resolves', async () => {
+    // The complement of the reset above: a host that answers `token-expiring`
+    // with the SAME stale token has not recovered, so resolving must not
+    // rewind the ladder to 1s (that is the once-a-second hammer again).
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      const env = fakeEnv();
+      const getToken = vi.fn(async () => 'still-stale');
+      const handle = await booted(env, { token: 'old', getToken });
+      const stale = '2025-12-31T23:59:59.000Z';
+      const expiring = () => env.emit({ snapnedit: 1, type: 'event', payload: { name: 'token-expiring', data: { expiresAt: stale } } });
+
+      for (const step of [1_000, 2_000, 4_000, 8_000]) {
+        expiring();
+        const before = getToken.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(step - 1);
+        expect(getToken.mock.calls.length).toBe(before);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(getToken.mock.calls.length).toBe(before + 1);
+      }
+
+      handle.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('without getToken, expiry surfaces error(token_expired) exactly once and stops the ticker', async () => {
     vi.useFakeTimers();
     try {

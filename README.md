@@ -40,9 +40,10 @@ document.addEventListener('snapnedit:error', (e) => console.warn(e.detail.code, 
 
 `mount()` answers the frame's `token-expiring` report by calling your `getToken` and handing
 the frame the result. A token that is **already expired** is reported to your listeners once
-and then retried on an exponential backoff (1s, 2s, 4s … capped at 30s) rather than once a
-second, and a rejected `getToken` is surfaced as an `error` event and retried on the same
-schedule. With **no** `getToken` configured there is nothing to refresh: the loader emits a
+and then retried on an exponential backoff (1s, 2s, 4s … capped at 30s) — the frame backs its
+own reports off on the same ladder, and the loader collapses them into that one event. A
+rejected `getToken`, or one that has not settled within 30s, is surfaced as an `error` event
+and retried on the same schedule; any successful refresh resets the ladder. With **no** `getToken` configured there is nothing to refresh: the loader emits a
 single `error` with code `token_expired` at the moment the token runs out, instead of leaving
 you to discover it through failing calls.
 
@@ -71,6 +72,9 @@ editor.destroy();
 delivered in `'callback'` mode — including the multi-page **PDF · all pages** item (real
 PDF bytes, `format: 'pdf'`) and the animated **GIF** item (`format: 'gif'`, an `image/gif`
 blob at the GIF's own dimensions). Nothing is hidden just because the mode is `'callback'`.
+
+Since `'gif'` is not a value `features.export.formats` accepts, setting `formats` at all is
+read as an exact list and hides the GIF item; leave `formats` unset to keep it.
 
 The one asymmetry: the **programmatic** `handle.export('pdf')` resolves with a rendered
 **PNG** raster, not a PDF container (the frame does not carry the PDF library). The in-UI
