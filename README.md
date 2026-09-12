@@ -17,7 +17,34 @@ React is an optional peer.
 
 Auto-mounts into `data-target`. `data-token`, `data-locale` and `data-config` (a JSON
 `EmbedConfig`) are also read. Without `data-key`/`data-token`, call `window.Snapnedit.mount()`
-yourself.
+yourself. Each loader tag auto-mounts **exactly once** — the tag is stamped with
+`data-snapnedit-mounted` when it is claimed, so two loader tags on one page get one editor
+each, in document order.
+
+### DOM events
+
+An auto-mounted embed has no handle to call `on()` on, so the loader mirrors the two
+lifecycle events onto the container element as bubbling `CustomEvent`s:
+
+| Event | `detail` |
+| --- | --- |
+| `snapnedit:ready` | `{ version, editor }` — `editor` is the `EditorHandle`, your hook for `on(...)`, `export()`, `run()`, … |
+| `snapnedit:error` | `{ code, message }` — every error the editor reports, including a failed mount and an expired session (`token_expired`). Also logged with `console.error`. |
+
+```js
+document.addEventListener('snapnedit:ready', (e) => e.detail.editor.on('job', console.log));
+document.addEventListener('snapnedit:error', (e) => console.warn(e.detail.code, e.detail.message));
+```
+
+### Token refresh
+
+`mount()` answers the frame's `token-expiring` report by calling your `getToken` and handing
+the frame the result. A token that is **already expired** is reported to your listeners once
+and then retried on an exponential backoff (1s, 2s, 4s … capped at 30s) rather than once a
+second, and a rejected `getToken` is surfaced as an `error` event and retried on the same
+schedule. With **no** `getToken` configured there is nothing to refresh: the loader emits a
+single `error` with code `token_expired` at the moment the token runs out, instead of leaving
+you to discover it through failing calls.
 
 ## Module
 

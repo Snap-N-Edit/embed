@@ -27,13 +27,53 @@ export function isTrustedEvent(event: MessageEvent, expectedSource: unknown, exp
   return event.source === expectedSource && event.origin === expectedOrigin;
 }
 
-/** Removes function-valued keys (shallow) so the object is structured-cloneable. */
-export function stripFunctions<T extends object>(value: T): T {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value)) {
-    if (typeof v !== 'function') out[k] = v;
+/**
+ * A `{}`-literal (or `Object.create(null)`) object — NOT a `Blob`, `File`,
+ * `Date`, `ArrayBuffer`, typed array or any other class instance, all of which
+ * structured clone handles natively and must cross the boundary untouched.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) return false;
+  const proto: unknown = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function stripValue(value: unknown, seen: Map<object, unknown>): unknown {
+  if (Array.isArray(value)) {
+    const already = seen.get(value);
+    if (already !== undefined) return already;
+    const out: unknown[] = [];
+    seen.set(value, out);
+    // A function INSIDE an array becomes `null` rather than vanishing: dropping
+    // it would renumber every later index, which is worse than a visible hole.
+    for (const item of value) out.push(typeof item === 'function' ? null : stripValue(item, seen));
+    return out;
   }
-  return out as T;
+  if (isPlainObject(value)) {
+    const already = seen.get(value);
+    if (already !== undefined) return already;
+    const out: Record<string, unknown> = {};
+    seen.set(value, out);
+    for (const [k, v] of Object.entries(value)) {
+      if (typeof v !== 'function') out[k] = stripValue(v, seen);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Deep-copies `value` without any function-valued property, so the result is
+ * structured-cloneable and `postMessage` cannot throw a DataCloneError.
+ *
+ * Plain objects and arrays are walked recursively (a nested `getToken`-shaped
+ * callback anywhere in the config used to surface as a 60s boot timeout);
+ * everything else — `Blob`, `File`, `Date`, `ArrayBuffer`, typed arrays, class
+ * instances — is passed through by reference, since those clone natively and
+ * copying them would corrupt them. Shared references and cycles are preserved.
+ */
+export function stripFunctions<T extends object>(value: T): T {
+  return stripValue(value, new Map<object, unknown>()) as T;
 }
 
 let counter = 0;

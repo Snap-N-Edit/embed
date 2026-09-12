@@ -44,7 +44,7 @@ export interface EmbedConfig {
 /** The config as it crosses postMessage: `getToken` removed. */
 export type FrameConfig = Omit<EmbedConfig, 'getToken'>;
 
-export type EmbedErrorCode = ErrorCode | 'not_ready' | 'mask_required' | 'timeout' | 'origin_denied' | 'destroyed';
+export type EmbedErrorCode = ErrorCode | 'not_ready' | 'mask_required' | 'timeout' | 'origin_denied' | 'destroyed' | 'token_expired';
 
 export class EmbedError extends Error {
   constructor(readonly code: EmbedErrorCode, message: string) {
@@ -76,6 +76,7 @@ export interface EmbedEvents {
   export: { format: ExportFormat; blob: Blob; width: number; height: number };
   save: { document: Document; pages: Document[] };
   close: Record<string, never>;
+  /** Something failed outside a specific call. `token_expired`: the session token ran out and no `getToken` was configured to replace it. */
   error: { code: EmbedErrorCode; message: string };
   'token-expiring': { expiresAt: string };
 }

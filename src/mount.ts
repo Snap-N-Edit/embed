@@ -3,6 +3,9 @@ import { EmbedError, type EditorHandle, type EditorMethod, type EmbedConfig, typ
 
 export const CALL_TIMEOUT_MS = 30_000;
 export const LONG_CALL_TIMEOUT_MS = 180_000;
+/** Token-refresh backoff: 1s, 2s, 4s … capped at 30s. See `onTokenExpiring`. */
+export const TOKEN_RETRY_BASE_MS = 1_000;
+export const TOKEN_RETRY_MAX_MS = 30_000;
 const LONG_CALLS: ReadonlySet<EditorMethod> = new Set<EditorMethod>(['export', 'run', 'loadImage', 'addImage']);
 const METHODS: readonly EditorMethod[] = ['loadImage', 'addImage', 'loadDocument', 'getDocument', 'getPages', 'newDocument', 'export', 'run', 'openTool', 'undo', 'redo', 'select', 'getState', 'setTheme', 'setFeatures', 'setLocale'];
 
@@ -65,8 +68,23 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
     iframe.contentWindow?.postMessage(msg, embedOrigin);
   };
 
+  /**
+   * One host listener must never take down the bus: a throw here would skip
+   * every later listener for the same event AND propagate out of the `message`
+   * handler (or out of `on()`, for the `ready` replay). Report it and carry on.
+   */
+  const invokeListener = <E extends EmbedEventName>(name: E, cb: (p: EmbedEvents[E]) => void, data: EmbedEvents[E]): void => {
+    try {
+      cb(data);
+    } catch (err) {
+      console.error(`[snapnedit embed] ${name} listener threw`, err);
+    }
+  };
+
   const emitLocal = <E extends EmbedEventName>(name: E, data: EmbedEvents[E]): void => {
-    for (const cb of listeners.get(name) ?? []) (cb as (p: EmbedEvents[E]) => void)(data);
+    // Snapshot: a listener that un/subscribes during dispatch must not mutate
+    // the set being iterated.
+    for (const cb of [...(listeners.get(name) ?? [])]) invokeListener(name, cb as (p: EmbedEvents[E]) => void, data);
   };
 
   /** Full teardown shared by an early boot failure (timeout / pre-ready `error`) and `handle.destroy()`: stop listening, fail any pending calls, and remove the iframe so an abandoned frame can never trigger another `init` (which would resend the real token/publishableKey). Idempotent. */
@@ -78,9 +96,89 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
     // armed, holding the (Node) event loop open and firing against a frame
     // that no longer exists.
     if (bootTimer !== null) { win.clearTimeout(bootTimer); bootTimer = null; }
+    // Same for the token-refresh/expiry ticker, and drop the replay buffer so a
+    // destroyed handle can't hand a stale `ready` to a listener registered after.
+    clearRefreshTimer();
+    readyPayload = null;
     for (const p of pending.values()) { win.clearTimeout(p.timer); p.reject(new EmbedError('destroyed', 'editor was destroyed')); }
     pending.clear();
     iframe.remove();
+  };
+
+  // --- token refresh -------------------------------------------------------
+  // The frame re-arms its expiry clock on a 1s floor, so an already-expired
+  // token makes it report `token-expiring` EVERY SECOND for as long as the
+  // condition lasts. Handling each one immediately turned that into a 1/s
+  // hammer on the host's `getToken` endpoint (and a 1/s event storm); instead
+  // the first one is reported and the retries are spaced out exponentially.
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let refreshInFlight = false;
+  let refreshBackoffMs = 0;
+  let tokenExpiredEmitted = false;
+
+  const clearRefreshTimer = (): void => {
+    if (refreshTimer !== null) { win.clearTimeout(refreshTimer); refreshTimer = null; }
+  };
+  const armRefreshTimer = (delay: number, fn: () => void): void => {
+    clearRefreshTimer();
+    refreshTimer = win.setTimeout(() => { refreshTimer = null; fn(); }, delay);
+  };
+  const nextBackoff = (): number => {
+    refreshBackoffMs = refreshBackoffMs === 0 ? TOKEN_RETRY_BASE_MS : Math.min(refreshBackoffMs * 2, TOKEN_RETRY_MAX_MS);
+    return refreshBackoffMs;
+  };
+
+  /** Asks the host for a fresh token and hands it to the frame; a failure is reported and retried, backed off. */
+  const requestToken = (): void => {
+    const getToken = config.getToken;
+    if (destroyed || refreshInFlight || !getToken) return;
+    refreshInFlight = true;
+    void getToken().then(
+      (token) => {
+        refreshInFlight = false;
+        if (destroyed) return;
+        post({ snapnedit: 1, type: 'refresh-token', payload: { token } });
+      },
+      (e: unknown) => {
+        refreshInFlight = false;
+        if (destroyed) return;
+        emitLocal('error', { code: 'unauthorized', message: `getToken failed: ${String(e)}` });
+        // One failed round-trip to the host's backend is not fatal — retry,
+        // backed off, so a broken endpoint isn't hammered either.
+        armRefreshTimer(nextBackoff(), requestToken);
+      },
+    );
+  };
+
+  /** Handles a `token-expiring` report; returns whether it should still reach host listeners. */
+  const onTokenExpiring = (data: EmbedEvents['token-expiring']): boolean => {
+    if (destroyed) return false;
+    const expMs = Date.parse(data.expiresAt);
+    const alreadyExpired = Number.isFinite(expMs) && expMs <= Date.now();
+    if (!config.getToken) {
+      // Nothing can refresh this session. Wait out whatever TTL is left, then
+      // say so exactly once — otherwise the first sign of trouble is a silent
+      // storm of 401s from calls the host thinks should work.
+      if (tokenExpiredEmitted || refreshTimer !== null) return false;
+      const delay = Number.isFinite(expMs) ? Math.max(0, expMs - Date.now()) : 0;
+      armRefreshTimer(delay, () => {
+        tokenExpiredEmitted = true; // one-shot: the ticker stops here
+        emitLocal('error', { code: 'token_expired', message: 'the embed session token expired and no getToken was configured' });
+      });
+      return true;
+    }
+    if (!alreadyExpired) {
+      // The frame warns at 80% of the TTL, so there is still a real window:
+      // refresh immediately and treat the session as healthy again.
+      refreshBackoffMs = 0;
+      clearRefreshTimer();
+      requestToken();
+      return true;
+    }
+    if (refreshTimer !== null || refreshInFlight) return false; // already handling this episode; stay quiet
+    const firstOfEpisode = refreshBackoffMs === 0;
+    armRefreshTimer(nextBackoff(), requestToken);
+    return firstOfEpisode;
   };
 
   const onMessage = (event: MessageEvent): void => {
@@ -130,10 +228,7 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
         teardown();
         readyReject(new EmbedError(err.code, err.message)); readyResolve = null; readyReject = null;
       }
-      if (name === 'token-expiring' && config.getToken) {
-        void config.getToken().then((token) => post({ snapnedit: 1, type: 'refresh-token', payload: { token } }))
-          .catch((e: unknown) => emitLocal('error', { code: 'unauthorized', message: `getToken failed: ${String(e)}` }));
-      }
+      if (name === 'token-expiring' && !onTokenExpiring(data as EmbedEvents['token-expiring'])) return;
       emitLocal(name, data as never);
     }
   };
@@ -160,9 +255,17 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
       listeners.set(event, set);
       // `ready` already fired for anyone who registered after awaiting
       // `mount()` — replay it so the listener isn't silently dead. See
-      // `readyPayload`.
+      // `readyPayload`. Asynchronously, so `on()` behaves identically whether
+      // it beat the frame or not: it always returns its unsubscribe function
+      // before the listener runs, and a throwing listener can never propagate
+      // out of `on()` itself.
       if (event === 'ready' && readyPayload !== null) {
-        (cb as (p: EmbedEvents['ready']) => void)(readyPayload);
+        const payload = readyPayload;
+        queueMicrotask(() => {
+          if (destroyed) return;
+          if (listeners.get('ready')?.has(cb as (p: never) => void) !== true) return; // unsubscribed in between
+          invokeListener('ready', cb as (p: EmbedEvents['ready']) => void, payload);
+        });
       }
       return () => handle.off(event, cb);
     },
