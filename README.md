@@ -63,6 +63,21 @@ editor.on('job', (e) => console.log(e.operation, e.status));
 editor.destroy();
 ```
 
+## Export
+
+`features.export.mode` decides where the bytes from the frame's **own** Export button go:
+`'download'` saves a file, `'callback'` fires the `export` event with the blob, `'both'`
+(the default inside an embed) does both from a single render. **Every** menu item is
+delivered in `'callback'` mode — including the multi-page **PDF · all pages** item (real
+PDF bytes, `format: 'pdf'`) and the animated **GIF** item (`format: 'gif'`, an `image/gif`
+blob at the GIF's own dimensions). Nothing is hidden just because the mode is `'callback'`.
+
+The one asymmetry: the **programmatic** `handle.export('pdf')` resolves with a rendered
+**PNG** raster, not a PDF container (the frame does not carry the PDF library). The in-UI
+`pdf` item does produce real PDF bytes on both paths. `'gif'` is not a value
+`handle.export()` accepts at all — it is `export`-event-only, which is why
+`features.export.formats` is typed `AllowlistExportFormat[]` (`ExportFormat` minus `'gif'`).
+
 ## React
 
 ```tsx

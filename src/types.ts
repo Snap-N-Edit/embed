@@ -1,7 +1,25 @@
 import type { ErrorCode, OperationId } from '@snapnedit/shared';
 import type { Document } from '@snapnedit/editor-core';
 
-export type ExportFormat = 'png' | 'jpg' | 'webp' | 'avif' | 'svg' | 'pdf';
+/**
+ * Every format an `export` event can report.
+ *
+ * `'gif'` is the odd one out: the animated-GIF item appears only for a
+ * document with animated layers and ignores the size chips, so it is NOT
+ * something a host can put in `features.export.formats` (see
+ * {@link AllowlistExportFormat}) — but it is a real format the editor
+ * delivers, with an `image/gif` blob and the GIF's own dimensions.
+ */
+export type ExportFormat = 'png' | 'jpg' | 'webp' | 'avif' | 'svg' | 'pdf' | 'gif';
+
+/**
+ * The subset of {@link ExportFormat} a host can REQUEST — both in
+ * `features.export.formats` and as the argument to
+ * {@link EditorHandle.export}. `'gif'` is excluded from both: the animated
+ * GIF is produced only by the frame's own Export menu, for a document that
+ * actually has animated layers, and is delivered through the `export` event.
+ */
+export type AllowlistExportFormat = Exclude<ExportFormat, 'gif'>;
 export type RailKey = 'templates' | 'text' | 'shapes' | 'elements' | 'data' | 'uploads' | 'stock' | 'draw' | 'brand' | 'magic' | 'saved';
 export type PanelKey = 'layers' | 'adjustments' | 'filters' | 'effects' | 'animation' | 'ai';
 export type ThemeColorKey = 'bg' | 'bg2' | 'surface' | 'surface2' | 'line' | 'line2' | 'text' | 'dim' | 'accent' | 'accentText' | 'checkerA' | 'checkerB';
@@ -22,7 +40,7 @@ export interface EmbedFeatures {
   collab?: boolean;
   stock?: boolean;
   branding?: boolean;
-  export?: { formats?: ExportFormat[]; mode?: 'download' | 'callback' | 'both' };
+  export?: { formats?: AllowlistExportFormat[]; mode?: 'download' | 'callback' | 'both' };
   save?: boolean;
   close?: boolean;
 }
@@ -100,7 +118,7 @@ export interface EditorHandle {
   getDocument(): Promise<Document>;
   getPages(): Promise<Document[]>;
   newDocument(width: number, height: number): Promise<void>;
-  export(format: ExportFormat, opts?: { scale?: number; targetWidth?: number; quality?: number }): Promise<ExportResult>;
+  export(format: AllowlistExportFormat, opts?: { scale?: number; targetWidth?: number; quality?: number }): Promise<ExportResult>;
   run(operation: OperationId, params?: Record<string, unknown>): Promise<void>;
   openTool(target: OperationId | RailKey): Promise<void>;
   undo(): Promise<void>;
