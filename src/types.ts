@@ -55,6 +55,7 @@ export interface EmbedConfig {
   theme?: EmbedTheme;
   features?: EmbedFeatures;
   document?: Document;
+  /** An image to load at mount. A string is a URL and follows {@link EditorHandle.loadImage}'s rules exactly (absolute, cross-origin `https:`/`blob:`/`data:`). */
   image?: string | Blob;
   canvas?: { width: number; height: number };
 }
@@ -84,6 +85,33 @@ export interface EmbedState {
 }
 
 export interface ExportResult { blob: Blob; width: number; height: number }
+
+/** Options for {@link EditorHandle.export}. */
+export interface EmbedExportOptions {
+  /**
+   * Pixel-dimension multiplier for the RASTER. The document is untouched:
+   * `scale: 2` yields a `2·width × 2·height` bitmap of the same design.
+   * Ignored by `svg` (resolution-independent); for `pdf` it raises the DPI of
+   * the raster embedded in the page, not the page's own size.
+   */
+  scale?: number;
+  /** Target raster width in px. Wins over {@link EmbedExportOptions.scale} when both are given. Same `svg`/`pdf` caveats. */
+  targetWidth?: number;
+  /** Lossy-encode quality, 0..1. Honored by `jpg`/`webp`/`avif`; ignored by `png`/`svg`/`pdf`. */
+  quality?: number;
+  /**
+   * `pdf` ONLY: build one PDF containing EVERY page of the project (one PDF
+   * page per project page, each sized to its own document), the same output
+   * the frame's **PDF · all pages** menu item produces. Defaults to `false` —
+   * a single PDF page for the ACTIVE document.
+   *
+   * Ignored (not rejected) for every other format: there is no multi-page
+   * PNG/JPG/WebP/AVIF/SVG container. `width`/`height` in the
+   * {@link ExportResult} report the ACTIVE page's dimensions, since pages may
+   * differ in size.
+   */
+  allPages?: boolean;
+}
 export type JobEventStatus = 'started' | 'succeeded' | 'failed';
 
 export interface EmbedEvents {
@@ -104,12 +132,14 @@ export interface EditorHandle {
   /**
    * Replaces the document with one sized to `src`.
    *
-   * A string `src` must be an `https:`, `blob:` or `data:` URL — anything
-   * else (including a relative path, which would resolve against the FRAME's
-   * origin rather than your page's) rejects with `invalid_input`. The frame
-   * fetches URLs itself, with its own origin and credentials, so it will not
-   * be pointed at arbitrary schemes on a host's behalf. When the bytes live
-   * on your own origin, fetch them host-side and pass the `Blob`/`File`.
+   * A string `src` must be an ABSOLUTE `https:`, `blob:` or `data:` URL, and
+   * an `https:` one must not be on the editor frame's own origin. Anything
+   * else — a relative path, an `http:`/`file:`/app scheme, or
+   * `https://snapnedit.com/...` — rejects with `invalid_input`. The frame
+   * fetches URLs itself, with its own origin and credentials, and hands you
+   * the exported bytes, so it will not be pointed at arbitrary schemes, nor
+   * at its own origin, on a host's behalf. When the bytes live on your own
+   * origin, fetch them host-side and pass the `Blob`/`File`.
    */
   loadImage(src: string | Blob | File, opts?: { name?: string }): Promise<void>;
   /** Adds `src` as a new layer, keeping the current document. Same `src` rules as {@link EditorHandle.loadImage}. */
@@ -118,7 +148,18 @@ export interface EditorHandle {
   getDocument(): Promise<Document>;
   getPages(): Promise<Document[]>;
   newDocument(width: number, height: number): Promise<void>;
-  export(format: AllowlistExportFormat, opts?: { scale?: number; targetWidth?: number; quality?: number }): Promise<ExportResult>;
+  /**
+   * Renders the document and resolves with the encoded bytes.
+   *
+   * Every format is produced by the same builder the frame's own Export menu
+   * uses, so the bytes are what a download would have saved — `'pdf'` is a
+   * real PDF whose single page is `doc.width × doc.height` (pass
+   * {@link EmbedExportOptions.allPages} for one PDF of every project page),
+   * and `'svg'` a true vector document. `width`/`height` report the
+   * DOCUMENT's dimensions for `pdf`/`svg` and the rendered bitmap's (after
+   * the pipeline's own clamping) for the raster formats.
+   */
+  export(format: AllowlistExportFormat, opts?: EmbedExportOptions): Promise<ExportResult>;
   run(operation: OperationId, params?: Record<string, unknown>): Promise<void>;
   openTool(target: OperationId | RailKey): Promise<void>;
   undo(): Promise<void>;

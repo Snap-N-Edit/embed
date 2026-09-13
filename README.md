@@ -59,7 +59,7 @@ const editor = await mount('#editor', {
   theme: { mode: 'dark', accent: '#7c5cff' },
 });
 
-await editor.loadImage(blob);          // https:, blob: or data: URLs, or a Blob/File
+await editor.loadImage(blob);          // a Blob/File, or an absolute cross-origin https:/blob:/data: URL
 await editor.run('remove-background');
 const { blob } = await editor.export('png');
 editor.on('job', (e) => console.log(e.operation, e.status));
@@ -78,11 +78,22 @@ blob at the GIF's own dimensions). Nothing is hidden just because the mode is `'
 Since `'gif'` is not a value `features.export.formats` accepts, setting `formats` at all is
 read as an exact list and hides the GIF item; leave `formats` unset to keep it.
 
-The one asymmetry: the **programmatic** `handle.export('pdf')` resolves with a rendered
-**PNG** raster, not a PDF container (the frame does not carry the PDF library). The in-UI
-`pdf` item does produce real PDF bytes on both paths. `'gif'` is not a value
-`handle.export()` accepts at all — it is `export`-event-only, which is why
-`features.export.formats` is typed `AllowlistExportFormat[]` (`ExportFormat` minus `'gif'`).
+The **programmatic** `handle.export(format, opts?)` runs the same builders as that menu, so
+neither path is a lesser version of the other: `'pdf'` is a real `application/pdf` whose
+single page is `doc.width × doc.height`, and `'svg'` a true vector document. `width`/`height`
+report the **document's** dimensions for `pdf`/`svg` (`scale`/`targetWidth` raise the DPI of
+the raster embedded in a PDF page, never the page itself) and the rendered bitmap's for the
+raster formats.
+
+`opts.allPages` is **`pdf`-only**: it returns one PDF containing every page of the project
+(one PDF page per project page, each sized to its own document) — the programmatic twin of
+the **PDF · all pages** item, with `width`/`height` reporting the *active* page since pages
+may differ in size. It is ignored, not rejected, for every other format, and leaving it out
+means `false`.
+
+`'gif'` is not a value `handle.export()` accepts at all — it is `export`-event-only, which is
+why `features.export.formats` is typed `AllowlistExportFormat[]` (`ExportFormat` minus
+`'gif'`).
 
 ## React
 
