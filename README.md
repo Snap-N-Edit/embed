@@ -109,7 +109,7 @@ Full reference — config, `EditorHandle`, events, theming, keys and limits:
 ## Development
 
 This package is developed inside the private snapnedit monorepo and mirrored to
-[github.com/alphajew420/snapnedit-embed](https://github.com/alphajew420/snapnedit-embed)
+[github.com/Snap-N-Edit/embed](https://github.com/Snap-N-Edit/embed)
 with its history. The mirror is read-only for code (it references sibling
 workspace packages, so it does not build on its own) — file issues and
 feature requests there, and pull requests are welcome as proposals; the change

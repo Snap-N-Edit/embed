@@ -1,15 +1,15 @@
 {
   "name": "@snapnedit/embed",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Embed the snapnedit AI photo editor in any site: script tag, mount(), or React.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alphajew420/snapnedit-embed.git"
+    "url": "git+https://github.com/Snap-N-Edit/embed.git"
   },
   "homepage": "https://snapnedit.com/docs/embed",
   "bugs": {
-    "url": "https://github.com/alphajew420/snapnedit-embed/issues"
+    "url": "https://github.com/Snap-N-Edit/embed/issues"
   },
   "keywords": [
     "snapnedit",
