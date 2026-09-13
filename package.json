@@ -1,23 +1,63 @@
 {
   "name": "@snapnedit/embed",
-  "version": "0.1.1",
+  "version": "0.1.2",
+  "description": "Embed the snapnedit AI photo editor in any site: script tag, mount(), or React.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alphajew420/snapnedit-embed.git"
+  },
+  "homepage": "https://snapnedit.com/docs/embed",
+  "bugs": {
+    "url": "https://github.com/alphajew420/snapnedit-embed/issues"
+  },
+  "keywords": [
+    "snapnedit",
+    "image-editor",
+    "photo-editor",
+    "embed",
+    "iframe",
+    "react",
+    "ai"
+  ],
   "private": false,
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist", "README.md"],
-  "publishConfig": { "access": "public" },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-    "./protocol": { "types": "./dist/protocol.d.ts", "default": "./dist/protocol.js" },
-    "./react": { "types": "./dist/react.d.ts", "default": "./dist/react.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol.d.ts",
+      "default": "./dist/protocol.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "default": "./dist/react.js"
+    }
   },
   "scripts": {
     "build": "tsc -b && node build.mjs",
     "test": "vitest run"
   },
-  "peerDependencies": { "react": "^19.0.0" },
-  "peerDependenciesMeta": { "react": { "optional": true } },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@snapnedit/shared": "*",
     "@snapnedit/editor-core": "*",

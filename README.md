@@ -105,3 +105,14 @@ import { SnapneditEditor } from '@snapnedit/embed/react';
 
 Full reference — config, `EditorHandle`, events, theming, keys and limits:
 <https://snapnedit.com/docs/embed>.
+
+## Development
+
+This package is developed inside the private snapnedit monorepo and mirrored to
+[github.com/alphajew420/snapnedit-embed](https://github.com/alphajew420/snapnedit-embed)
+with its history. The mirror is read-only for code (it references sibling
+workspace packages, so it does not build on its own) — file issues and
+feature requests there, and pull requests are welcome as proposals; the change
+lands through the monorepo and the mirror is refreshed on every release.
+
+Licensed under the [MIT License](./LICENSE).
