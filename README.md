@@ -4,9 +4,11 @@ Loads the full [snapnedit](https://snapnedit.com) editor into your page as a san
 iframe and gives you a typed handle to drive it. Browser-only, zero runtime dependencies;
 React is an optional peer.
 
-> **Not yet published to npm.** Use the script tag below today — it is served from
-> `https://snapnedit.com/embed/v1.js`. The module API documented here is what the package
-> will expose when it ships.
+```sh
+npm install @snapnedit/embed
+```
+
+The script tag below needs no install — it is served from `https://snapnedit.com/embed/v1.js`.
 
 ## Script tag
 
