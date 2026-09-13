@@ -12,7 +12,31 @@ export type HostToFrameMessage =
 export type FrameToHostMessage =
   | { snapnedit: 1; type: 'ready-for-init' }
   | { snapnedit: 1; type: 'event'; payload: { name: EmbedEventName; data: EmbedEvents[EmbedEventName] } }
-  | { snapnedit: 1; type: 'result'; id: string; payload: { ok: true; value: unknown } | { ok: false; error: { code: EmbedErrorCode; message: string } } };
+  | { snapnedit: 1; type: 'result'; id: string; payload: { ok: true; value: unknown } | { ok: false; error: ProtocolError } };
+
+/**
+ * A failure as it crosses postMessage. `details` is optional so an OLDER
+ * frame — which never sends it — stays a valid message: the loader rebuilds
+ * an `EmbedError` with no details, exactly as before.
+ */
+export interface ProtocolError { code: EmbedErrorCode; message: string; details?: Record<string, unknown> }
+
+/**
+ * The `invalid_input` message the FRAME answers a method it does not
+ * implement with. It lives here, in the package both sides share, so the
+ * loader can RECOGNIZE it: a newer loader calling a method an older `/embed`
+ * has never heard of gets this back, and turns it into the far more useful
+ * `unsupported` (see {@link isUnknownMethodError}) instead of surfacing a
+ * generic "invalid input" for a perfectly valid call.
+ */
+export function unknownMethodMessage(method: string): string {
+  return `unknown method ${String(method)}`;
+}
+
+/** True when `error` is an older frame's "I have never heard of `method`" answer. */
+export function isUnknownMethodError(error: ProtocolError, method: string): boolean {
+  return error.code === 'invalid_input' && error.message === unknownMethodMessage(method);
+}
 
 export type ProtocolMessage = HostToFrameMessage | FrameToHostMessage;
 

@@ -1,4 +1,4 @@
-import { DEFAULT_EMBED_ORIGIN, embedFrameUrl, isProtocolMessage, isTrustedEvent, newRequestId, stripFunctions, type FrameToHostMessage, type HostToFrameMessage } from './protocol.js';
+import { DEFAULT_EMBED_ORIGIN, embedFrameUrl, isProtocolMessage, isTrustedEvent, isUnknownMethodError, newRequestId, stripFunctions, type FrameToHostMessage, type HostToFrameMessage, type ProtocolError } from './protocol.js';
 import { EmbedError, type EditorHandle, type EditorMethod, type EmbedConfig, type EmbedEventName, type EmbedEvents } from './types.js';
 
 export const CALL_TIMEOUT_MS = 30_000;
@@ -13,8 +13,8 @@ export const TOKEN_RETRY_MAX_MS = 30_000;
  * wedging every later refresh — including the one that would have worked.
  */
 export const TOKEN_REQUEST_TIMEOUT_MS = 30_000;
-const LONG_CALLS: ReadonlySet<EditorMethod> = new Set<EditorMethod>(['export', 'run', 'loadImage', 'addImage']);
-const METHODS: readonly EditorMethod[] = ['loadImage', 'addImage', 'loadDocument', 'getDocument', 'getPages', 'newDocument', 'export', 'run', 'openTool', 'undo', 'redo', 'select', 'getState', 'setTheme', 'setFeatures', 'setLocale'];
+const LONG_CALLS: ReadonlySet<EditorMethod> = new Set<EditorMethod>(['export', 'exportTo', 'run', 'loadImage', 'addImage']);
+const METHODS: readonly EditorMethod[] = ['loadImage', 'addImage', 'loadDocument', 'getDocument', 'getPages', 'newDocument', 'export', 'exportTo', 'run', 'openTool', 'undo', 'redo', 'select', 'getState', 'setTheme', 'setFeatures', 'setLocale'];
 
 /** The slice of `window`/`document` `mount` touches — injectable so the whole handshake is unit-testable without a DOM. */
 export interface WindowLike {
@@ -30,7 +30,22 @@ export interface DocumentLike {
 }
 export interface MountDeps { window?: WindowLike; document?: DocumentLike }
 
-type Pending = { resolve: (v: unknown) => void; reject: (e: EmbedError) => void; timer: ReturnType<typeof setTimeout> };
+type Pending = { method: EditorMethod; resolve: (v: unknown) => void; reject: (e: EmbedError) => void; timer: ReturnType<typeof setTimeout> };
+
+/**
+ * Rebuilds a frame failure as the `EmbedError` the caller sees.
+ *
+ * The one translation: a frame that answered "unknown method" is an OLDER
+ * `/embed` than this loader, not a bad argument — so it becomes `unsupported`
+ * with a message that says what to do about it. Everything else, `details`
+ * included, is passed through verbatim.
+ */
+function toEmbedError(method: EditorMethod, error: ProtocolError, embedOrigin: string): EmbedError {
+  if (isUnknownMethodError(error, method)) {
+    return new EmbedError('unsupported', `${method}() is not supported by the editor frame at ${embedOrigin} — it is running an older version of snapnedit`);
+  }
+  return new EmbedError(error.code, error.message, error.details);
+}
 
 /**
  * Mounts the snapnedit editor into `target` as an iframe and returns a typed
@@ -277,7 +292,7 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
       pending.delete(msg.id);
       win.clearTimeout(p.timer);
       if (msg.payload.ok) p.resolve(msg.payload.value);
-      else p.reject(new EmbedError(msg.payload.error.code, msg.payload.error.message));
+      else p.reject(toEmbedError(p.method, msg.payload.error, embedOrigin));
       return;
     }
     if (msg.type === 'event') {
@@ -309,7 +324,7 @@ export function mount(target: HTMLElement | string, config: EmbedConfig, deps: M
         pending.delete(id);
         reject(new EmbedError('timeout', `${method} timed out`));
       }, LONG_CALLS.has(method) ? LONG_CALL_TIMEOUT_MS : CALL_TIMEOUT_MS);
-      pending.set(id, { resolve, reject, timer });
+      pending.set(id, { method, resolve, reject, timer });
       post({ snapnedit: 1, type: 'call', id, payload: { method, args } });
     });
   };

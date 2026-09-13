@@ -4,7 +4,7 @@
 import { mount } from './mount.js';
 import type { EditorHandle, EmbedConfig, EmbedErrorCode, EmbedEvents } from './types.js';
 
-export const version = '0.1.0';
+export const version = '0.2.0';
 
 /** Marks a `<script>` tag the loader has already auto-mounted from, so a second pass skips it. */
 export const PROCESSED_ATTR = 'data-snapnedit-mounted';

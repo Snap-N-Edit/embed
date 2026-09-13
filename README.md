@@ -95,6 +95,97 @@ means `false`.
 why `features.export.formats` is typed `AllowlistExportFormat[]` (`ExportFormat` minus
 `'gif'`).
 
+## Save straight to your storage
+
+`handle.exportTo(target, opts?)` renders exactly what `export()` renders and then
+**uploads the bytes from the editor frame itself** to a presigned URL you supply. Your
+server never sees the file and the browser uploads once, instead of handing the blob to
+your page to re-send.
+
+```ts
+const { status, bytes, etag } = await editor.exportTo(
+  { url: presignedUrl, format: 'png', headers: { 'x-amz-acl': 'private' } },
+  { scale: 2 },
+);
+```
+
+`opts` is the same `EmbedExportOptions` `export()` takes (`scale`, `targetWidth`,
+`quality`, `allPages`), and `target.format` the same format union — defaulting to `'png'`.
+It resolves with `{ ok: true, status, bytes, mime, width, height, etag }` (`etag` is `null`
+unless the bucket exposes it, see the CORS rules below) and rejects with an `EmbedError`:
+
+| `code` | when |
+| --- | --- |
+| `invalid_input` | `url` is not an absolute `https:` URL, or is on the editor frame's own origin; a method other than `PUT`/`POST`; an unknown format; a header outside the allowlist. Nothing is rendered or sent. |
+| `network_error` | the request never got a response — a CORS refusal, DNS/TLS failure, or a redirect (uploads use `redirect: 'error'`). The browser hides the reason from the page; the frame's devtools console has it. |
+| `upload_failed` | the endpoint answered non-2xx. The status is in `err.details.status`. |
+| `unsupported` | the `/embed` frame is older than this loader and has no `exportTo`. |
+
+### 1. Mint the URL on your server
+
+```ts
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+
+const s3 = new S3Client({ region: 'us-east-1' });
+const url = await getSignedUrl(
+  s3,
+  new PutObjectCommand({ Bucket: 'my-bucket', Key: `users/${user.id}/design.png`, ContentType: 'image/png' }),
+  { expiresIn: 300 },
+);
+```
+
+Hand that `url` to the browser and pass it straight to `exportTo`. **The `ContentType` you
+sign must match the format you export** (`image/png`, `image/jpeg`, `image/webp`,
+`image/avif`, `image/svg+xml`, `application/pdf`) — S3 answers `403` when the signed and
+sent `Content-Type` differ. `exportTo` sends the exported mime by default; pass your own
+`headers['content-type']` to override it, and sign every extra header you pass.
+
+Allowed headers (case-insensitive, at most 16): `content-type`, `cache-control`,
+`content-disposition`, and the `x-amz-*` / `x-goog-*` / `x-ms-*` prefixes. Anything else
+rejects with `invalid_input`. The request is always `credentials: 'omit'` — no cookies ever
+ride along — and the response body is never read.
+
+### 2. Allow the EDITOR FRAME's origin in your bucket's CORS
+
+The upload comes from `https://snapnedit.com` (the iframe), **not from your own site's
+origin** — that is the single most common reason a first attempt fails with
+`network_error`. Put `ETag` in `ExposeHeaders` if you want it back in the result.
+
+S3 (`aws s3api put-bucket-cors`):
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://snapnedit.com"],
+    "AllowedMethods": ["PUT"],
+    "AllowedHeaders": ["content-type", "cache-control", "content-disposition", "x-amz-*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3000
+  }
+]
+```
+
+Cloudflare R2 (same document, `allowed`/`exposeHeaders` spelling — R2 dashboard → bucket →
+Settings → CORS policy):
+
+```json
+[
+  {
+    "allowed": {
+      "origins": ["https://snapnedit.com"],
+      "methods": ["PUT"],
+      "headers": ["content-type", "cache-control", "content-disposition", "x-amz-*"]
+    },
+    "exposeHeaders": ["ETag"],
+    "maxAgeSeconds": 3000
+  }
+]
+```
+
+Add `"POST"` to the methods if you sign POST uploads, and use your self-hosted deployment's
+origin in place of `https://snapnedit.com` if you set `config.origin`.
+
 ## React
 
 ```tsx

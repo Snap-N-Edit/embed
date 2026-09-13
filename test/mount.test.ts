@@ -501,3 +501,102 @@ describe('mount', () => {
     await expect(mount(env.target as never, {}, { window: env.window as never, document: env.document as never })).rejects.toMatchObject({ code: 'invalid_input' });
   });
 });
+
+/**
+ * `exportTo()` is a plain forwarded call like `export()` — these cover the
+ * three things that are NOT plain about it: it must be on the LONG-call
+ * timeout (it renders AND uploads), a bucket's status code has to survive the
+ * postMessage hop inside `details`, and a frame too old to have the method at
+ * all must surface as `unsupported` rather than a baffling `invalid_input`.
+ */
+describe('exportTo', () => {
+  /** The `call` message the handle just posted. */
+  function lastCall(env: ReturnType<typeof fakeEnv>): Extract<HostToFrameMessage, { type: 'call' }> {
+    const msg = env.posted.at(-1)?.msg;
+    if (!msg || msg.type !== 'call') throw new Error(`expected a call, got ${String(msg?.type)}`);
+    return msg;
+  }
+
+  test('forwards the target and options verbatim and resolves with the frame result', async () => {
+    const env = fakeEnv();
+    const handle = await booted(env, { token: 't' });
+    const target = { url: 'https://bucket.example/a.png', method: 'PUT' as const, headers: { 'x-amz-acl': 'private' }, format: 'png' as const };
+    const call = handle.exportTo(target, { scale: 2 });
+    const sent = lastCall(env);
+    expect(sent.payload).toEqual({ method: 'exportTo', args: [target, { scale: 2 }] });
+    const value = { ok: true, status: 200, bytes: 1234, mime: 'image/png', width: 640, height: 480, etag: '"abc"' };
+    env.emit({ snapnedit: 1, type: 'result', id: sent.id, payload: { ok: true, value } });
+    await expect(call).resolves.toEqual(value);
+  });
+
+  test('is a LONG call: still pending at 30s, times out on the 180s ladder', async () => {
+    // Rendering a multi-page PDF and then uploading it is comfortably slower
+    // than the 30s default every non-render call gets.
+    vi.useFakeTimers();
+    try {
+      const env = fakeEnv();
+      const handle = await booted(env, { token: 't' });
+      const settled = vi.fn();
+      const call = handle.exportTo({ url: 'https://bucket.example/a.png' }).then(settled, settled);
+      await vi.advanceTimersByTimeAsync(30_001);
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(180_000);
+      await call;
+      expect(settled).toHaveBeenCalledWith(expect.objectContaining({ code: 'timeout' }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a non-2xx upload rejects as upload_failed with the bucket status in details', async () => {
+    const env = fakeEnv();
+    const handle = await booted(env, { token: 't' });
+    const call = handle.exportTo({ url: 'https://bucket.example/a.png' });
+    const sent = lastCall(env);
+    env.emit({
+      snapnedit: 1,
+      type: 'result',
+      id: sent.id,
+      payload: { ok: false, error: { code: 'upload_failed', message: 'the upload endpoint answered 403', details: { status: 403 } } },
+    });
+    const err = await call.then(
+      () => null,
+      (e: unknown) => e as { code: string; details?: { status?: number } },
+    );
+    expect(err?.code).toBe('upload_failed');
+    expect(err?.details).toEqual({ status: 403 });
+  });
+
+  test('an OLD frame that has never heard of the method rejects as unsupported, naming the frame origin', async () => {
+    // Protocol backward compatibility, the direction the loader owns: an
+    // older `/embed` answers any unknown method with
+    // `invalid_input: unknown method <name>`. Reporting that verbatim would
+    // tell a host its perfectly valid arguments were wrong.
+    const env = fakeEnv();
+    const handle = await booted(env, { token: 't' });
+    const call = handle.exportTo({ url: 'https://bucket.example/a.png' });
+    const sent = lastCall(env);
+    env.emit({ snapnedit: 1, type: 'result', id: sent.id, payload: { ok: false, error: { code: 'invalid_input', message: 'unknown method exportTo' } } });
+    await expect(call).rejects.toMatchObject({ code: 'unsupported', message: expect.stringContaining('https://snapnedit.com') as unknown as string });
+  });
+
+  test('a REAL invalid_input from the frame is passed through, not rewritten as unsupported', async () => {
+    const env = fakeEnv();
+    const handle = await booted(env, { token: 't' });
+    const call = handle.exportTo({ url: 'http://bucket.example/a.png' });
+    const sent = lastCall(env);
+    env.emit({ snapnedit: 1, type: 'result', id: sent.id, payload: { ok: false, error: { code: 'invalid_input', message: 'exportTo() needs an absolute https: URL for target.url' } } });
+    await expect(call).rejects.toMatchObject({ code: 'invalid_input', message: 'exportTo() needs an absolute https: URL for target.url' });
+  });
+
+  test('the unknown-method translation is per-method — another method name is left alone', async () => {
+    const env = fakeEnv();
+    const handle = await booted(env, { token: 't' });
+    const call = handle.exportTo({ url: 'https://bucket.example/a.png' });
+    const sent = lastCall(env);
+    // A frame complaining about a DIFFERENT method is not answering this call
+    // with "I am too old"; it is a genuine (if odd) invalid_input.
+    env.emit({ snapnedit: 1, type: 'result', id: sent.id, payload: { ok: false, error: { code: 'invalid_input', message: 'unknown method somethingElse' } } });
+    await expect(call).rejects.toMatchObject({ code: 'invalid_input' });
+  });
+});
