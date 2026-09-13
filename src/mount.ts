@@ -1,4 +1,4 @@
-import { DEFAULT_EMBED_ORIGIN, embedFrameUrl, isProtocolMessage, isTrustedEvent, isUnknownMethodError, newRequestId, stripFunctions, type FrameToHostMessage, type HostToFrameMessage, type ProtocolError } from './protocol.js';
+import { DEFAULT_EMBED_ORIGIN, EDITOR_METHODS, LONG_RUNNING_METHODS, embedFrameUrl, isProtocolMessage, isTrustedEvent, isUnknownMethodError, newRequestId, stripFunctions, type FrameToHostMessage, type HostToFrameMessage, type ProtocolError } from './protocol.js';
 import { EmbedError, type EditorHandle, type EditorMethod, type EmbedConfig, type EmbedEventName, type EmbedEvents } from './types.js';
 
 export const CALL_TIMEOUT_MS = 30_000;
@@ -13,8 +13,11 @@ export const TOKEN_RETRY_MAX_MS = 30_000;
  * wedging every later refresh — including the one that would have worked.
  */
 export const TOKEN_REQUEST_TIMEOUT_MS = 30_000;
-const LONG_CALLS: ReadonlySet<EditorMethod> = new Set<EditorMethod>(['export', 'exportTo', 'run', 'loadImage', 'addImage']);
-const METHODS: readonly EditorMethod[] = ['loadImage', 'addImage', 'loadDocument', 'getDocument', 'getPages', 'newDocument', 'export', 'exportTo', 'listDestinations', 'run', 'openTool', 'undo', 'redo', 'select', 'getState', 'setTheme', 'setFeatures', 'setLocale'];
+// Both lists live in `protocol.ts` — they are part of the machine-readable
+// contract (`protocol.json`) and are exhaustiveness-checked against
+// `EditorMethod` there, so the handle below can never miss a method.
+const LONG_CALLS: ReadonlySet<EditorMethod> = new Set<EditorMethod>(LONG_RUNNING_METHODS);
+const METHODS: readonly EditorMethod[] = EDITOR_METHODS;
 
 /** The slice of `window`/`document` `mount` touches — injectable so the whole handshake is unit-testable without a DOM. */
 export interface WindowLike {

@@ -1,0 +1,176 @@
+{
+  "$comment": "The snapnedit embed wire protocol, machine-readable. Checked against protocol.ts/types.ts by packages/embed/test/protocol-json.test.ts — every method, event and error code must appear here, so a wrapper generated from this file cannot fall behind the TypeScript loader. Human-readable companion: docs/embed-protocol.md.",
+  "name": "snapnedit-embed",
+  "version": 1,
+  "packageVersion": "0.3.1",
+  "transports": ["postMessage", "native"],
+  "envelope": {
+    "discriminator": "snapnedit",
+    "discriminatorValue": 1,
+    "note": "Every message is a JSON object carrying `snapnedit: 1` (the protocol version) and a `type`. Over postMessage it crosses as a structured-cloned object; over the native transport as the same object JSON.stringify'd to a string. Structured-clone-only values (Blob) are re-encoded for the native transport — see `native.blobEncoding`.",
+    "hostToFrame": [
+      {
+        "type": "init",
+        "shape": { "snapnedit": 1, "type": "init", "payload": { "config": "FrameConfig" } },
+        "note": "Accepted exactly once, and only from the origin the frame was opened for. On the native transport the frame synthesizes its own init from the URL query, so a shell never needs to send one."
+      },
+      {
+        "type": "call",
+        "shape": { "snapnedit": 1, "type": "call", "id": "string", "payload": { "method": "string", "args": "unknown[]" } },
+        "note": "`id` is opaque and echoed back on the matching `result`."
+      },
+      {
+        "type": "refresh-token",
+        "shape": { "snapnedit": 1, "type": "refresh-token", "payload": { "token": "string" } },
+        "note": "Answers a `token-expiring` event with a freshly minted embed token."
+      }
+    ],
+    "frameToHost": [
+      {
+        "type": "ready-for-init",
+        "shape": { "snapnedit": 1, "type": "ready-for-init" },
+        "note": "The frame is listening. On the native transport it is buffered until an outbound channel exists."
+      },
+      {
+        "type": "event",
+        "shape": { "snapnedit": 1, "type": "event", "payload": { "name": "string", "data": "object" } }
+      },
+      {
+        "type": "result",
+        "shape": {
+          "snapnedit": 1,
+          "type": "result",
+          "id": "string",
+          "payload": { "ok": "boolean", "value": "unknown (ok: true)", "error": "{ code, message, details? } (ok: false)" }
+        }
+      }
+    ]
+  },
+  "methods": {
+    "loadImage": {
+      "params": ["string | Blob | File", "{ name?: string }?"],
+      "result": "void",
+      "longRunning": true,
+      "note": "A string must be an absolute https:, blob: or data: URL, never on the frame's own origin. Native shells pass a data: URL or an https: URL — blob: cannot cross the process boundary."
+    },
+    "addImage": { "params": ["string | Blob | File", "{ name?: string }?"], "result": "void", "longRunning": true },
+    "loadDocument": { "params": ["Document"], "result": "void", "longRunning": false },
+    "getDocument": { "params": [], "result": "Document", "longRunning": false },
+    "getPages": { "params": [], "result": "Document[]", "longRunning": false },
+    "newDocument": { "params": ["number", "number"], "result": "void", "longRunning": false },
+    "export": {
+      "params": ["'png' | 'jpg' | 'webp' | 'avif' | 'svg' | 'pdf'", "EmbedExportOptions?"],
+      "result": "{ blob: Blob, width: number, height: number }",
+      "longRunning": true,
+      "note": "Over the native transport a Blob cannot be JSON-serialized, so the `blob` value arrives as `{ dataUrl, mime, bytes }` in its place. See `native.blobEncoding`."
+    },
+    "exportTo": {
+      "params": ["EmbedExportTarget", "EmbedExportOptions?"],
+      "result": "EmbedExportToResult",
+      "longRunning": true,
+      "note": "Renders exactly what `export` renders and PUTs the bytes to a presigned url or a saved storage destination. JSON-safe on both transports."
+    },
+    "listDestinations": { "params": [], "result": "EmbedDestinationSummary[]", "longRunning": false },
+    "run": { "params": ["OperationId", "Record<string, unknown>?"], "result": "void", "longRunning": true },
+    "openTool": { "params": ["OperationId | RailKey"], "result": "void", "longRunning": false },
+    "undo": { "params": [], "result": "void", "longRunning": false },
+    "redo": { "params": [], "result": "void", "longRunning": false },
+    "select": { "params": ["string[]"], "result": "void", "longRunning": false },
+    "getState": { "params": [], "result": "EmbedState", "longRunning": false },
+    "setTheme": { "params": ["EmbedTheme"], "result": "void", "longRunning": false },
+    "setFeatures": { "params": ["EmbedFeatures"], "result": "void", "longRunning": false },
+    "setLocale": { "params": ["string"], "result": "void", "longRunning": false }
+  },
+  "events": {
+    "ready": { "payload": { "version": "string" } },
+    "change": { "payload": { "dirty": "boolean", "pageCount": "number" } },
+    "selection": { "payload": { "ids": "string[]", "kind": "string | null" } },
+    "job": {
+      "payload": {
+        "operation": "OperationId",
+        "status": "'started' | 'succeeded' | 'failed'",
+        "jobId": "string?",
+        "credits": "number",
+        "durationMs": "number?",
+        "error": "{ code: EmbedErrorCode, message: string }?",
+        "endUserId": "string?"
+      }
+    },
+    "export": {
+      "payload": { "format": "'png' | 'jpg' | 'webp' | 'avif' | 'svg' | 'pdf' | 'gif'", "blob": "Blob", "width": "number", "height": "number" },
+      "note": "Fired by the frame's own Export menu. Over the native transport the `blob` value arrives as `{ dataUrl, mime, bytes }` — see `native.blobEncoding`."
+    },
+    "save": { "payload": { "document": "Document", "pages": "Document[]" } },
+    "close": { "payload": {} },
+    "error": { "payload": { "code": "EmbedErrorCode", "message": "string" } },
+    "token-expiring": { "payload": { "expiresAt": "string (ISO 8601)" } }
+  },
+  "errorCodes": [
+    "invalid_input",
+    "unsupported_mime",
+    "too_large",
+    "not_found",
+    "input_fetch_failed",
+    "provider_failed",
+    "provider_exhausted",
+    "rate_limited",
+    "bot_check_failed",
+    "unauthorized",
+    "forbidden",
+    "payment_required",
+    "internal",
+    "not_ready",
+    "mask_required",
+    "timeout",
+    "origin_denied",
+    "destroyed",
+    "token_expired",
+    "network_error",
+    "upload_failed",
+    "unsupported"
+  ],
+  "native": {
+    "frameUrl": "https://snapnedit.com/embed?transport=native&origin=native:<app-id>&key=pk_live_...",
+    "queryParams": {
+      "transport": { "required": true, "value": "native", "note": "Anything else keeps the frame on the postMessage transport." },
+      "origin": {
+        "required": true,
+        "pattern": "^native:[A-Za-z0-9][A-Za-z0-9._-]{1,127}$",
+        "note": "The shell's self-asserted app id, lower-cased by the api. Must be listed in the publishable key's allowed origins (dashboard → API keys). Sent to POST /embed/sessions as `hostOrigin` and carried in the issued token's `origin` claim."
+      },
+      "key": { "required": false, "note": "A pk_ publishable key. Exactly one of `key` or `token` is required." },
+      "token": { "required": false, "note": "A host-server-minted embed token (POST /embed/tokens). Skips the allowlist check." },
+      "locale": { "required": false, "note": "UI locale, e.g. `en`. Unknown values fall back to the default." }
+    },
+    "inbound": "SnapneditNativeBridge.receive",
+    "inboundSignature": "window.SnapneditNativeBridge.receive(json: string): boolean",
+    "outboundChannels": [
+      { "id": "wkwebview", "platform": "WKWebView (iOS/macOS)", "expression": "window.webkit.messageHandlers.snapnedit.postMessage(json)" },
+      { "id": "webview2", "platform": "WebView2 (Windows)", "expression": "window.chrome.webview.postMessage(json)" },
+      { "id": "android", "platform": "Android WebView @JavascriptInterface", "expression": "window.SnapneditAndroid.postMessage(json)" },
+      { "id": "flutter-inappwebview", "platform": "flutter_inappwebview", "expression": "window.flutter_inappwebview.callHandler('snapnedit', json)" },
+      { "id": "flutter-channel", "platform": "webview_flutter JavaScriptChannel", "expression": "window.Snapnedit.postMessage(json)" },
+      { "id": "sink", "platform": "any", "expression": "window.SnapneditNativeBridge.setSink(fn)" }
+    ],
+    "channelName": "snapnedit",
+    "flutterChannelName": "Snapnedit",
+    "buffering": {
+      "note": "Outbound messages produced before any channel exists are buffered and flushed the moment one is detected — detection is retried on every send and on the first receive() call.",
+      "maxBufferedMessages": 200,
+      "overflow": "oldest-dropped"
+    },
+    "blobEncoding": {
+      "note": "The ONE difference between the two transports, and it is mechanical rather than protocol-level: JSON has no Blob, so before serializing an envelope the frame walks it and replaces every Blob value, wherever it sits, with a JSON object of the same key. Nothing else about the envelope changes. Affects `export`'s result and the `export` event; every other method is already JSON-safe.",
+      "replacement": { "dataUrl": "data:<mime>;base64,<...>", "mime": "string", "bytes": "number" },
+      "example": { "blob": { "dataUrl": "data:image/png;base64,iVBORw0…", "mime": "image/png", "bytes": 12345 }, "width": 20, "height": 15 }
+    },
+    "payloadLimits": {
+      "note": "Both directions cross the JS/native boundary as one string. Keep inbound data: URLs under a few MB (evaluateJavaScript/ExecuteScriptAsync copy the whole string); for anything larger hand the frame an https: URL instead, or upload with exportTo rather than reading a data: URL back out.",
+      "recommendedMaxDataUrlBytes": 4194304
+    },
+    "errorEnvelope": {
+      "note": "A receive() payload that is not parseable JSON, or is not a protocol message, is answered with an `error` event rather than being ignored — a shell with a serialization bug hears about it.",
+      "example": { "snapnedit": 1, "type": "event", "payload": { "name": "error", "data": { "code": "invalid_input", "message": "SnapneditNativeBridge.receive: payload is not valid JSON" } } }
+    }
+  }
+}

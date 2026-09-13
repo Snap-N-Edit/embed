@@ -1,5 +1,15 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": { "noEmit": true, "composite": false, "rootDir": ".", "paths": { "@snapnedit/*": ["../*/src"] } },
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "rootDir": ".",
+    "paths": { "@snapnedit/*": ["../*/src"] },
+    // `types: []` in tsconfig.json keeps the PUBLISHED package browser-only —
+    // it must never pull in node globals. The TESTS are not published, and
+    // `protocol-json.test.ts` reads `protocol.json` off disk, so node types are
+    // added here and here only.
+    "types": ["node"]
+  },
   "include": ["src", "test"]
 }

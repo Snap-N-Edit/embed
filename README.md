@@ -229,6 +229,29 @@ import { SnapneditEditor } from '@snapnedit/embed/react';
 Full reference — config, `EditorHandle`, events, theming, keys and limits:
 <https://snapnedit.com/docs/embed>.
 
+## Native apps
+
+The same editor runs inside a WKWebView, WebView2, Android WebView or Flutter
+webview. There is no parent window to `postMessage` to, so the frame installs
+`window.SnapneditNativeBridge` and speaks the identical protocol over your
+shell's JavaScript bridge:
+
+```
+https://snapnedit.com/embed?transport=native&origin=native:com.acme.photos&key=pk_live_...
+```
+
+Add `native:com.acme.photos` to the key's allowed origins in the dashboard,
+send messages in with `SnapneditNativeBridge.receive(json)`, and receive them
+on your platform's channel (`webkit.messageHandlers.snapnedit`,
+`chrome.webview`, `SnapneditAndroid`, `flutter_inappwebview`, or a
+`Snapnedit` JavaScript channel).
+
+Guide: <https://snapnedit.com/docs/embed-native>. The wire contract is
+machine-readable in [`protocol.json`](./protocol.json), shipped with this
+package — every message, method, event and error code, for wrapper authors.
+Official Swift/.NET/Kotlin/Dart wrappers are in progress under
+[github.com/Snap-N-Edit](https://github.com/Snap-N-Edit).
+
 ## Development
 
 This package is developed inside the private snapnedit monorepo and mirrored to

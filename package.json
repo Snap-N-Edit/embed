@@ -1,6 +1,6 @@
 {
   "name": "@snapnedit/embed",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Embed the snapnedit AI photo editor in any site: script tag, mount(), or React.",
   "license": "MIT",
   "repository": {
@@ -26,6 +26,7 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
+    "protocol.json",
     "README.md",
     "LICENSE"
   ],
@@ -44,7 +45,8 @@
     "./react": {
       "types": "./dist/react.d.ts",
       "default": "./dist/react.js"
-    }
+    },
+    "./protocol.json": "./protocol.json"
   },
   "scripts": {
     "build": "tsc -b && node build.mjs",
