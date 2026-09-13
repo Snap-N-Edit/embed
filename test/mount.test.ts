@@ -589,6 +589,29 @@ describe('exportTo', () => {
     await expect(call).rejects.toMatchObject({ code: 'invalid_input', message: 'exportTo() needs an absolute https: URL for target.url' });
   });
 
+  test('a saved-destination target is forwarded verbatim, and its key/bucket come back', async () => {
+    const env = fakeEnv();
+    const handle = await booted(env, { token: 't' });
+    const target = { destinationId: 'dst_1', format: 'jpg' as const };
+    const call = handle.exportTo(target);
+    const sent = lastCall(env);
+    // No loader-side rewriting: the frame owns the url/destinationId choice.
+    expect(sent.payload).toEqual({ method: 'exportTo', args: [target] });
+    const value = {
+      ok: true,
+      status: 200,
+      bytes: 99,
+      mime: 'image/jpeg',
+      width: 640,
+      height: 480,
+      etag: null,
+      key: 'snapnedit/2026/09/13/abc.jpg',
+      bucket: 'my-app-images',
+    };
+    env.emit({ snapnedit: 1, type: 'result', id: sent.id, payload: { ok: true, value } });
+    await expect(call).resolves.toEqual(value);
+  });
+
   test('the unknown-method translation is per-method — another method name is left alone', async () => {
     const env = fakeEnv();
     const handle = await booted(env, { token: 't' });
@@ -598,5 +621,66 @@ describe('exportTo', () => {
     // with "I am too old"; it is a genuine (if odd) invalid_input.
     env.emit({ snapnedit: 1, type: 'result', id: sent.id, payload: { ok: false, error: { code: 'invalid_input', message: 'unknown method somethingElse' } } });
     await expect(call).rejects.toMatchObject({ code: 'invalid_input' });
+  });
+});
+
+/**
+ * `listDestinations()` is the picker half of the saved-destination flow: a
+ * plain forwarded call, on the DEFAULT (not long) timeout, whose only special
+ * behaviour is the same old-frame translation `exportTo` gets.
+ */
+describe('listDestinations', () => {
+  function lastCall(env: ReturnType<typeof fakeEnv>): Extract<HostToFrameMessage, { type: 'call' }> {
+    const msg = env.posted.at(-1)?.msg;
+    if (!msg || msg.type !== 'call') throw new Error(`expected a call, got ${String(msg?.type)}`);
+    return msg;
+  }
+
+  test('is exposed on the handle and resolves with the frame\'s summaries', async () => {
+    const env = fakeEnv();
+    const handle = await booted(env, { token: 't' });
+    const call = handle.listDestinations();
+    const sent = lastCall(env);
+    expect(sent.payload).toEqual({ method: 'listDestinations', args: [] });
+    const value = [{ id: 'dst_1', name: 'Production', provider: 'aws-s3', bucket: 'my-app-images', isDefault: true }];
+    env.emit({ snapnedit: 1, type: 'result', id: sent.id, payload: { ok: true, value } });
+    await expect(call).resolves.toEqual(value);
+  });
+
+  test('an account with no destinations resolves with an empty list, not an error', async () => {
+    const env = fakeEnv();
+    const handle = await booted(env, { token: 't' });
+    const call = handle.listDestinations();
+    env.emit({ snapnedit: 1, type: 'result', id: lastCall(env).id, payload: { ok: true, value: [] } });
+    await expect(call).resolves.toEqual([]);
+  });
+
+  test('an OLD frame rejects as unsupported — the protocol stays backward compatible', async () => {
+    const env = fakeEnv();
+    const handle = await booted(env, { token: 't' });
+    const call = handle.listDestinations();
+    const sent = lastCall(env);
+    env.emit({
+      snapnedit: 1,
+      type: 'result',
+      id: sent.id,
+      payload: { ok: false, error: { code: 'invalid_input', message: 'unknown method listDestinations' } },
+    });
+    await expect(call).rejects.toMatchObject({ code: 'unsupported' });
+  });
+
+  test('is NOT a long call: it times out on the 30s ladder', async () => {
+    vi.useFakeTimers();
+    try {
+      const env = fakeEnv();
+      const handle = await booted(env, { token: 't' });
+      const settled = vi.fn();
+      const call = handle.listDestinations().then(settled, settled);
+      await vi.advanceTimersByTimeAsync(30_001);
+      await call;
+      expect(settled).toHaveBeenCalledWith(expect.objectContaining({ code: 'timeout' }));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -14,7 +14,7 @@ export const TOKEN_RETRY_MAX_MS = 30_000;
  */
 export const TOKEN_REQUEST_TIMEOUT_MS = 30_000;
 const LONG_CALLS: ReadonlySet<EditorMethod> = new Set<EditorMethod>(['export', 'exportTo', 'run', 'loadImage', 'addImage']);
-const METHODS: readonly EditorMethod[] = ['loadImage', 'addImage', 'loadDocument', 'getDocument', 'getPages', 'newDocument', 'export', 'exportTo', 'run', 'openTool', 'undo', 'redo', 'select', 'getState', 'setTheme', 'setFeatures', 'setLocale'];
+const METHODS: readonly EditorMethod[] = ['loadImage', 'addImage', 'loadDocument', 'getDocument', 'getPages', 'newDocument', 'export', 'exportTo', 'listDestinations', 'run', 'openTool', 'undo', 'redo', 'select', 'getState', 'setTheme', 'setFeatures', 'setLocale'];
 
 /** The slice of `window`/`document` `mount` touches — injectable so the whole handshake is unit-testable without a DOM. */
 export interface WindowLike {

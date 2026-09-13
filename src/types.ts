@@ -164,14 +164,14 @@ export interface EmbedExportOptions {
 }
 
 /**
- * Where {@link EditorHandle.exportTo} PUTs the rendered bytes: a presigned
- * upload url your own backend minted for your own bucket.
+ * Where {@link EditorHandle.exportTo} PUTs the rendered bytes when your own
+ * backend minted the presigned upload url.
  *
  * The frame uploads straight from the iframe — your server never sees the
  * bytes, and the browser uploads once instead of handing them to your page to
  * re-send.
  */
-export interface EmbedExportTarget {
+export interface EmbedPresignedTarget {
   /**
    * The presigned upload url. Must be an ABSOLUTE `https:` url, and must not
    * be on the editor frame's own origin — the same rule
@@ -193,6 +193,61 @@ export interface EmbedExportTarget {
   headers?: Record<string, string>;
   /** What to render, from the same union {@link EditorHandle.export} takes. Defaults to `'png'`. */
   format?: EmbedExportFormat;
+}
+
+/**
+ * Where {@link EditorHandle.exportTo} PUTs the rendered bytes when the bucket
+ * is one your snapnedit account already has saved — a **storage destination**
+ * (dashboard → Storage, or <https://snapnedit.com/docs/storage-destinations>).
+ *
+ * You provide only the destination's id: the frame asks the api for a signed
+ * upload slot with its own embed session and PUTs into it. Nothing about the
+ * bucket — its name, its region, least of all its credentials — reaches your
+ * page, and your backend mints nothing. The bucket still needs a CORS rule
+ * allowing `PUT` from the EDITOR FRAME's origin (`https://snapnedit.com`),
+ * exactly as the presigned-url path does.
+ *
+ * Use {@link EditorHandle.listDestinations} to offer the account's
+ * destinations as a picker.
+ */
+export interface EmbedSavedDestinationTarget {
+  /** Id of a storage destination on the embed session's account. */
+  destinationId: string;
+  /**
+   * Extra request headers, merged UNDER the ones the api signed — a signed
+   * header always wins, since changing it would invalidate the signature.
+   * Same allowlist and count limit as {@link EmbedPresignedTarget.headers}.
+   */
+  headers?: Record<string, string>;
+  /** What to render, from the same union {@link EditorHandle.export} takes. Defaults to `'png'`. */
+  format?: EmbedExportFormat;
+}
+
+/**
+ * {@link EditorHandle.exportTo}'s destination: either a presigned url you
+ * minted ({@link EmbedPresignedTarget}) or a saved storage destination on your
+ * snapnedit account ({@link EmbedSavedDestinationTarget}). Exactly one of
+ * `url` / `destinationId` — passing both, or neither, rejects with
+ * `invalid_input`.
+ */
+export type EmbedExportTarget = EmbedPresignedTarget | EmbedSavedDestinationTarget;
+
+/** Every storage backend a saved destination can point at. */
+export type EmbedStorageProvider = 'aws-s3' | 'cloudflare-r2' | 'backblaze-b2' | 's3-compatible';
+
+/**
+ * One of the account's saved storage destinations, as
+ * {@link EditorHandle.listDestinations} reports it — enough to render a
+ * picker, and deliberately nothing more: no region, no endpoint, no key
+ * fragment reaches the host page.
+ */
+export interface EmbedDestinationSummary {
+  id: string;
+  name: string;
+  provider: EmbedStorageProvider;
+  bucket: string;
+  /** True for the destination the account delivers to when a job names none. */
+  isDefault: boolean;
 }
 
 /**
@@ -218,6 +273,14 @@ export interface EmbedExportToResult {
    * `Access-Control-Expose-Headers`, so add `ETag` there to receive it.
    */
   etag?: string | null;
+  /**
+   * The object key the bytes were written to. Present ONLY for a
+   * {@link EmbedSavedDestinationTarget} upload — a presigned url you minted
+   * yourself already encodes the key you chose.
+   */
+  key?: string;
+  /** The bucket the bytes were written to. Present only for a {@link EmbedSavedDestinationTarget} upload. */
+  bucket?: string;
 }
 export type JobEventStatus = 'started' | 'succeeded' | 'failed';
 
@@ -282,8 +345,25 @@ export interface EditorHandle {
    * Rejects with `invalid_input` (bad url, method, format or header),
    * `network_error` (the request never got a response — CORS, DNS, a
    * redirect), or `upload_failed` with `details: { status }` for a non-2xx.
+   *
+   * Instead of a `url` you may name a **saved storage destination** on your
+   * snapnedit account — `exportTo({ destinationId })`. The frame then gets the
+   * signed slot from the api itself with its own embed session, your backend
+   * mints nothing, and the result additionally carries the `key` and `bucket`
+   * the bytes landed at. See {@link EmbedSavedDestinationTarget}.
    */
   exportTo(target: EmbedExportTarget, options?: EmbedExportOptions): Promise<EmbedExportToResult>;
+  /**
+   * The saved storage destinations on the embed session's account, so you can
+   * offer them as a picker and pass the chosen `id` to
+   * {@link EditorHandle.exportTo}. Resolves with `[]` when the account has
+   * none.
+   *
+   * Only what a picker needs is returned (id, name, provider, bucket, which
+   * one is the default) — never a region, an endpoint, or any part of a
+   * credential.
+   */
+  listDestinations(): Promise<EmbedDestinationSummary[]>;
   run(operation: OperationId, params?: Record<string, unknown>): Promise<void>;
   openTool(target: OperationId | RailKey): Promise<void>;
   undo(): Promise<void>;

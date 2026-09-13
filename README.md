@@ -121,6 +121,38 @@ unless the bucket exposes it, see the CORS rules below) and rejects with an `Emb
 | `upload_failed` | the endpoint answered non-2xx. The status is in `err.details.status`. |
 | `unsupported` | the `/embed` frame is older than this loader and has no `exportTo`. |
 
+### Or: name a saved destination instead of minting a URL
+
+If the bucket is already saved on your snapnedit account as a **storage destination**
+(dashboard → Storage), pass its id and skip everything below — no presigned URL, no
+signing code, nothing to configure on your page:
+
+```ts
+const destinations = await editor.listDestinations();
+// → [{ id: 'dst_1', name: 'Production', provider: 'aws-s3', bucket: 'my-app-images', isDefault: true }]
+
+const result = await editor.exportTo({ destinationId: 'dst_1', format: 'png' });
+// → { ok: true, status: 200, bytes: 91234, mime: 'image/png', width: 1024, height: 768,
+//      etag: '"…"', key: 'snapnedit/2026/09/13/….png', bucket: 'my-app-images' }
+```
+
+The frame asks the api for a one-shot signed slot using its own embed session, then PUTs
+into it exactly as it would into a URL you minted. Two fields are added to the result that
+a self-minted upload does not get — **`key`** and **`bucket`** — because you did not choose
+them. `method` is not accepted on this shape (it is always a signed `PUT`), and passing both
+`url` and `destinationId`, or neither, rejects with `invalid_input`.
+
+`listDestinations()` returns only what a picker needs: no region, no endpoint, no part of a
+credential. It resolves with `[]` for an account with no destinations, and rejects with the
+api's own codes (`not_found`, `unauthorized`) when the session cannot read them.
+
+**Your host page still needs no CORS configuration** — the request comes from the editor
+frame. The **bucket** does still need the rule in step 2 below, allowing `PUT` from
+`https://snapnedit.com`.
+
+Full setup, provider fields and bucket permissions:
+<https://snapnedit.com/docs/storage-destinations>
+
 ### 1. Mint the URL on your server
 
 ```ts
