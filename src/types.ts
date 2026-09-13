@@ -284,11 +284,55 @@ export interface EmbedExportToResult {
 }
 export type JobEventStatus = 'started' | 'succeeded' | 'failed';
 
+/**
+ * The `job` event's payload — one per lifecycle transition of an AI
+ * operation the frame ran (`started`, then exactly one of
+ * `succeeded`/`failed`).
+ *
+ * This is the host's METERING hook: everything needed to bill (or rate-limit,
+ * or audit) your own end users is on it, so you never have to reconcile
+ * against snapnedit's api. Attribute it with {@link EmbedJobEvent.endUserId},
+ * which is whatever `endUserId` you minted the embed token with.
+ */
+export interface EmbedJobEvent {
+  operation: OperationId;
+  status: JobEventStatus;
+  jobId?: string;
+  /**
+   * Credits this job costs your account.
+   *
+   * On `started` it is the operation's PUBLISHED cost — the estimate, before
+   * the server has weighed in. On `succeeded`/`failed` it is what the server
+   * actually reported for the job (`0` for a free operation, and `0` for a
+   * {@link EmbedJobEvent.cached} result, which is not billed twice). Bill off
+   * the terminal event, not the `started` one.
+   */
+  credits: number;
+  /**
+   * `true` when the result came back from snapnedit's content-addressed cache
+   * rather than being computed: the same image, the same operation and the
+   * same params had already been run. Cached results are not billed, so a
+   * host metering its own users should not bill for one either.
+   *
+   * Always `false` on `started` (nothing is known yet) and on `failed`.
+   */
+  cached: boolean;
+  /**
+   * `true` when the job existed only to DELIVER an already-computed result
+   * into a storage destination — the cache-hit-with-a-destination case, where
+   * no operation ran. Like {@link EmbedJobEvent.cached}, it is not billed.
+   */
+  deliveryOnly: boolean;
+  durationMs?: number;
+  error?: { code: EmbedErrorCode; message: string };
+  endUserId?: string;
+}
+
 export interface EmbedEvents {
   ready: { version: string };
   change: { dirty: boolean; pageCount: number };
   selection: { ids: string[]; kind: string | null };
-  job: { operation: OperationId; status: JobEventStatus; jobId?: string; credits: number; durationMs?: number; error?: { code: EmbedErrorCode; message: string }; endUserId?: string };
+  job: EmbedJobEvent;
   export: { format: ExportFormat; blob: Blob; width: number; height: number };
   save: { document: Document; pages: Document[] };
   close: Record<string, never>;

@@ -87,11 +87,11 @@ describe('<SnapneditEditor>', () => {
     });
 
     act(() => { fake.emit('change', { dirty: true, pageCount: 2 }); });
-    act(() => { fake.emit('job', { operation: 'upscale', status: 'succeeded', credits: 1 }); });
+    act(() => { fake.emit('job', { operation: 'upscale', status: 'succeeded', credits: 1, cached: false, deliveryOnly: false }); });
     act(() => { fake.emit('error', { code: 'token_expired', message: 'gone' }); });
     act(() => { fake.emit('close', {}); });
     expect(onChange).toHaveBeenCalledWith({ dirty: true, pageCount: 2 });
-    expect(onJob).toHaveBeenCalledWith({ operation: 'upscale', status: 'succeeded', credits: 1 });
+    expect(onJob).toHaveBeenCalledWith({ operation: 'upscale', status: 'succeeded', credits: 1, cached: false, deliveryOnly: false });
     expect(onError).toHaveBeenCalledWith({ code: 'token_expired', message: 'gone' });
     expect(onClose).toHaveBeenCalledWith();
     expect(onSave).not.toHaveBeenCalled();

@@ -2,7 +2,7 @@
   "$comment": "The snapnedit embed wire protocol, machine-readable. Checked against protocol.ts/types.ts by packages/embed/test/protocol-json.test.ts — every method, event and error code must appear here, so a wrapper generated from this file cannot fall behind the TypeScript loader. Human-readable companion: docs/embed-protocol.md.",
   "name": "snapnedit-embed",
   "version": 1,
-  "packageVersion": "0.3.1",
+  "packageVersion": "0.4.0",
   "transports": ["postMessage", "native"],
   "envelope": {
     "discriminator": "snapnedit",
@@ -91,10 +91,13 @@
         "status": "'started' | 'succeeded' | 'failed'",
         "jobId": "string?",
         "credits": "number",
+        "cached": "boolean",
+        "deliveryOnly": "boolean",
         "durationMs": "number?",
         "error": "{ code: EmbedErrorCode, message: string }?",
         "endUserId": "string?"
-      }
+      },
+      "note": "The host's metering hook. `credits` is the operation's published cost on `started` and what the server actually billed on `succeeded`/`failed` (0 for a free operation, and 0 for a cached one). `cached` is true when the result came back from snapnedit's content-addressed cache instead of being computed \u2014 not billed, so do not bill your own end user for it either. `deliveryOnly` is true when the job existed only to push an already-computed result into a storage destination; also not billed. Both are always false on `started`, and on `failed`. `endUserId` echoes whatever the embed token was minted with."
     },
     "export": {
       "payload": { "format": "'png' | 'jpg' | 'webp' | 'avif' | 'svg' | 'pdf' | 'gif'", "blob": "Blob", "width": "number", "height": "number" },

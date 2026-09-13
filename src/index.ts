@@ -17,4 +17,4 @@ export {
 export type { EmbedTransport, NativeChannelId, ProtocolError } from './protocol.js';
 export { mount } from './mount.js';
 export type { MountDeps, WindowLike, DocumentLike } from './mount.js';
-export const version = '0.3.1';
+export const version = '0.4.0';

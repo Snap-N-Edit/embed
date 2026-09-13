@@ -62,7 +62,7 @@ const editor = await mount('#editor', {
 await editor.loadImage(blob);          // a Blob/File, or an absolute cross-origin https:/blob:/data: URL
 await editor.run('remove-background');
 const { blob } = await editor.export('png');
-editor.on('job', (e) => console.log(e.operation, e.status));
+editor.on('job', (e) => console.log(e.operation, e.status, e.credits, e.cached)); // see "Metering your own end users"
 editor.destroy();
 ```
 
@@ -217,6 +217,31 @@ Settings → CORS policy):
 
 Add `"POST"` to the methods if you sign POST uploads, and use your self-hosted deployment's
 origin in place of `https://snapnedit.com` if you set `config.origin`.
+
+## Metering your own end users
+
+The `job` event is the whole billing story, so you never have to reconcile
+against snapnedit's API:
+
+```ts
+editor.on('job', (e) => {
+  if (e.status !== 'succeeded') return;          // started = estimate; failed = refunded
+  if (e.cached || e.deliveryOnly) return;        // not billed to you, so don't bill your user
+  meter(e.endUserId, e.operation, e.credits);    // what your account was actually charged
+});
+```
+
+| Field | Meaning |
+| --- | --- |
+| `credits` | The operation's **published** cost on `started` (an estimate), and what the server actually reported on `succeeded`/`failed`. `0` for a free operation such as `resize-image`. Bill off the terminal event. |
+| `cached` | The result came back from snapnedit's content-addressed cache — the same image, operation and params had already been run. Not billed. Always `false` on `started`/`failed`. |
+| `deliveryOnly` | The job existed only to push an already-computed result into a storage destination; no operation ran. Also not billed. |
+| `endUserId` | Whatever you minted the [host token](https://snapnedit.com/docs/embed#host-minted-tokens) with — your attribution key. |
+| `jobId` / `durationMs` / `error` | The job's id, its wall-clock time, and the typed failure code when `status` is `'failed'`. |
+
+Your account's own totals — jobs, credits, cache hits and embed sessions,
+broken down by key, origin and operation — live in the dashboard and at
+`GET /usage`: <https://snapnedit.com/docs/usage>.
 
 ## React
 
