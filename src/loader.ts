@@ -25,6 +25,15 @@ export function parseScriptConfig(el: { dataset: DOMStringMap; src: string }): {
   }
   if (el.dataset.key) config.publishableKey = el.dataset.key;
   if (el.dataset.token) config.token = el.dataset.token;
+  // `data-get-token="fnName"`: a script tag can't carry a function, so it names a global one, looked up on every refresh.
+  const getTokenName = el.dataset.getToken;
+  if (getTokenName) {
+    config.getToken = async () => {
+      const fn = (globalThis as Record<string, unknown>)[getTokenName];
+      if (typeof fn !== 'function') throw new Error(`data-get-token: window.${getTokenName} is not a function`);
+      return (await (fn as () => Promise<string> | string)()) as string;
+    };
+  }
   if (el.dataset.locale) config.locale = el.dataset.locale;
   try { config.origin = new URL(el.src).origin; } catch { /* leave default */ }
   return { config, target: el.dataset.target ?? null };
@@ -44,7 +53,7 @@ declare global {
  * when `document.currentScript` is null.
  */
 const LOADER_SCRIPT_SELECTOR =
-  `script[data-key][src*="/embed/v1.js"]:not([${PROCESSED_ATTR}]), script[data-token][src*="/embed/v1.js"]:not([${PROCESSED_ATTR}])`;
+  ['key', 'token', 'get-token'].map((a) => `script[data-${a}][src*="/embed/v1.js"]:not([${PROCESSED_ATTR}])`).join(', ');
 
 /** The slice of `document` {@link resolveLoaderScript} reads — injectable so the resolution is unit-testable without a DOM. */
 export interface LoaderDocumentLike {
@@ -108,7 +117,7 @@ function dispatchOn<T>(el: HTMLElement, type: string, detail: T): void {
   el.dispatchEvent(new CustomEvent<T>(type, { detail, bubbles: true }));
 }
 
-/** IIFE entry: exposes `window.Snapnedit` and auto-mounts when the script tag carries `data-key`/`data-token`. */
+/** IIFE entry: exposes `window.Snapnedit` and auto-mounts when the script tag carries `data-key`/`data-token`/`data-get-token`. */
 export function installLoader(deps: InstallLoaderDeps = {}): void {
   const win = deps.window ?? (typeof window !== 'undefined' ? (window as LoaderHostWindow) : null);
   const doc = deps.document ?? (typeof document !== 'undefined' ? (document as unknown as LoaderHostDocument) : null);
@@ -124,7 +133,7 @@ export function installLoader(deps: InstallLoaderDeps = {}): void {
   }
   // A loader tag with no credentials is the legitimate "I'll call mount()
   // myself" case, not a misconfiguration — stay quiet.
-  if (!(script.dataset.key || script.dataset.token)) return;
+  if (!(script.dataset.key || script.dataset.token || script.dataset.getToken)) return;
   // Claim the tag BEFORE mounting: a second synchronous execution (two copies
   // of v1.js, a re-inserted tag) must not race us into a duplicate editor.
   markLoaderScript(script);

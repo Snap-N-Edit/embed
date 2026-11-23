@@ -12,7 +12,7 @@ import {
 } from '../src/loader.js';
 import type { EditorHandle, EmbedConfig, EmbedEventName, EmbedEvents } from '../src/types.js';
 
-const SELECTOR = `script[data-key][src*="/embed/v1.js"]:not([${PROCESSED_ATTR}]), script[data-token][src*="/embed/v1.js"]:not([${PROCESSED_ATTR}])`;
+const SELECTOR = `script[data-key][src*="/embed/v1.js"]:not([${PROCESSED_ATTR}]), script[data-token][src*="/embed/v1.js"]:not([${PROCESSED_ATTR}]), script[data-get-token][src*="/embed/v1.js"]:not([${PROCESSED_ATTR}])`;
 
 describe('parseScriptConfig', () => {
   test('reads data-key, data-target, data-config JSON and derives origin from src', () => {
@@ -22,6 +22,14 @@ describe('parseScriptConfig', () => {
   test('data-token wins over nothing; invalid data-config is ignored', () => {
     const el = { src: 'http://localhost:3000/embed/v1.js', dataset: { token: 't', config: '{oops' } as DOMStringMap };
     expect(parseScriptConfig(el)).toEqual({ target: null, config: { token: 't', origin: 'http://localhost:3000' } });
+  });
+  test('data-get-token names a global looked up on each call; a missing one rejects', async () => {
+    const el = { src: 'https://snapnedit.com/embed/v1.js', dataset: { getToken: 'crosslyToken' } as DOMStringMap };
+    const { config } = parseScriptConfig(el);
+    await expect(config.getToken!()).rejects.toThrow('window.crosslyToken is not a function');
+    (globalThis as Record<string, unknown>).crosslyToken = async () => 'tok_1';
+    await expect(config.getToken!()).resolves.toBe('tok_1');
+    delete (globalThis as Record<string, unknown>).crosslyToken;
   });
 });
 
