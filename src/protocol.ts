@@ -255,6 +255,7 @@ export const NATIVE_OUTBOUND_CHANNELS = [
   { id: 'android', expression: 'window.SnapneditAndroid.postMessage(json)' },
   { id: 'flutter-inappwebview', expression: "window.flutter_inappwebview.callHandler('snapnedit', json)" },
   { id: 'flutter-channel', expression: 'window.Snapnedit.postMessage(json)' },
+  { id: 'react-native-webview', expression: 'window.ReactNativeWebView.postMessage(json)' },
   { id: 'sink', expression: 'window.SnapneditNativeBridge.setSink(fn)' },
 ] as const;
 
